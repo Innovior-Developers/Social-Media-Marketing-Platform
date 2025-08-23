@@ -62,7 +62,7 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
         'social_accounts' => [],
         'preferences' => [
             'timezone' => 'UTC',
-            'language' => 'en', 
+            'language' => 'en',
             'theme' => 'light',
             'notifications' => [
                 'email' => true,
@@ -103,7 +103,7 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     /**
      * Simple MongoDB Role System
      */
-    
+
     public function hasRole(string $role): bool
     {
         $roles = $this->getAttribute('roles') ?? [];
@@ -156,12 +156,12 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     {
         $allPermissions = [];
         $roles = $this->getAttribute('roles') ?? [];
-        
+
         foreach ($roles as $role) {
             $permissions = $this->getPermissionsForRole($role);
             $allPermissions = array_merge($allPermissions, $permissions);
         }
-        
+
         return array_unique($allPermissions);
     }
 
@@ -169,19 +169,36 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     {
         $rolePermissions = [
             'admin' => [
-                'create posts', 'edit posts', 'delete posts', 'schedule posts',
-                'view analytics', 'manage team', 'manage billing', 'admin access',
-                'manage users', 'manage roles', 'system settings'
+                'create posts',
+                'edit posts',
+                'delete posts',
+                'schedule posts',
+                'view analytics',
+                'manage team',
+                'manage billing',
+                'admin access',
+                'manage users',
+                'manage roles',
+                'system settings'
             ],
             'manager' => [
-                'create posts', 'edit posts', 'delete posts', 'schedule posts',
-                'view analytics', 'manage team'
+                'create posts',
+                'edit posts',
+                'delete posts',
+                'schedule posts',
+                'view analytics',
+                'manage team'
             ],
             'editor' => [
-                'create posts', 'edit posts', 'schedule posts', 'view analytics'
+                'create posts',
+                'edit posts',
+                'schedule posts',
+                'view analytics'
             ],
             'user' => [
-                'create posts', 'edit posts', 'schedule posts'
+                'create posts',
+                'edit posts',
+                'schedule posts'
             ],
         ];
 
@@ -192,7 +209,7 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     {
         $directPermissions = $this->getAttribute('permissions') ?? [];
         $rolePermissions = $this->getRolePermissions();
-        
+
         return array_unique(array_merge($directPermissions, $rolePermissions));
     }
 
@@ -210,18 +227,18 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     {
         $socialAccounts = $this->getAttribute('social_accounts') ?? [];
         return collect($socialAccounts)->filter(function ($account) {
-            return isset($account['access_token']) && 
-                   !empty($account['access_token']) &&
-                   ($account['status'] ?? 'inactive') === 'active';
+            return isset($account['access_token']) &&
+                !empty($account['access_token']) &&
+                ($account['status'] ?? 'inactive') === 'active';
         });
     }
 
     public function canPostTo(string $platform): bool
     {
         $connected = $this->connectedSocialAccounts();
-        return $connected->has($platform) && 
-               $connected[$platform]['status'] === 'active' &&
-               !$this->hasReachedPostingLimit();
+        return $connected->has($platform) &&
+            $connected[$platform]['status'] === 'active' &&
+            !$this->hasReachedPostingLimit();
     }
 
     public function getSubscriptionLimits(): array
@@ -238,13 +255,23 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
 
     public function hasReachedPostingLimit(): bool
     {
-        return false; // TODO: Implement when posts model is ready
+        $limits = $this->getSubscriptionLimits();
+        $thisMonthPosts = $this->posts()
+            ->where('created_at', '>=', now()->startOfMonth())
+            ->count();
+
+        return $thisMonthPosts >= $limits['posts_per_month'];
     }
 
+    // Update this method too:
     public function getRemainingPosts(): int
     {
         $limits = $this->getSubscriptionLimits();
-        return $limits['posts_per_month'];
+        $thisMonthPosts = $this->posts()
+            ->where('created_at', '>=', now()->startOfMonth())
+            ->count();
+
+        return max(0, $limits['posts_per_month'] - $thisMonthPosts);
     }
 
     public function canAddSocialAccount(): bool
@@ -273,5 +300,28 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     public function scopeWithRole($query, string $role)
     {
         return $query->where('roles', $role);
+    }
+
+    /**
+     * Relationships
+     */
+    public function posts()
+    {
+        return $this->hasMany(SocialMediaPost::class);
+    }
+
+    public function scheduledPosts()
+    {
+        return $this->hasMany(ScheduledPost::class);
+    }
+
+    public function contentCalendar()
+    {
+        return $this->hasMany(ContentCalendar::class);
+    }
+
+    public function analytics()
+    {
+        return $this->hasMany(PostAnalytics::class);
     }
 }
