@@ -138,4 +138,15 @@ class TikTokProvider extends AbstractSocialMediaProvider
     {
         return ['video'];
     }
+
+    public function getDefaultScopes(): array
+    {
+        return [
+            'user.info.basic',
+            'user.info.profile',
+            'user.info.stats',
+            'video.list',
+            'video.upload'
+        ];
+    }
 }

@@ -105,4 +105,14 @@ class InstagramProvider extends AbstractSocialMediaProvider
     {
         return ['image', 'video', 'reel'];
     }
+
+    public function getDefaultScopes(): array
+    {
+        return [
+            'instagram_basic',
+            'instagram_content_publish',
+            'pages_show_list',
+            'pages_read_engagement'
+        ];
+    }
 }

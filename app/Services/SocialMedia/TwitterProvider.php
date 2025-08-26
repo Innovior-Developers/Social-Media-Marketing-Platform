@@ -82,4 +82,9 @@ class TwitterProvider extends AbstractSocialMediaProvider
     {
         return ['image', 'video', 'gif'];
     }
+
+    public function getDefaultScopes(): array
+    {
+        return ['read', 'write'];
+    }
 }

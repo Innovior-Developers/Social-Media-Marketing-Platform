@@ -136,4 +136,13 @@ class YouTubeProvider extends AbstractSocialMediaProvider
     {
         return ['video'];
     }
+
+    public function getDefaultScopes(): array
+    {
+        return [
+            'https://www.googleapis.com/auth/youtube.upload',
+            'https://www.googleapis.com/auth/youtube.readonly',
+            'https://www.googleapis.com/auth/youtubepartner'
+        ];
+    }
 }

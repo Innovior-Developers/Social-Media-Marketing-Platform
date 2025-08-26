@@ -101,4 +101,9 @@ class LinkedInProvider extends AbstractSocialMediaProvider
     {
         return ['image', 'video', 'document', 'article'];
     }
+
+    public function getDefaultScopes(): array
+    {
+        return ['r_liteprofile', 'r_emailaddress', 'w_member_social'];
+    }
 }

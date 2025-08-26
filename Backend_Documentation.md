@@ -3196,4 +3196,5 @@ php artisan view:clear
 - **Redis Documentation:** https://redis.io/docs
 - **Production Deployment:** DigitalOcean, AWS, or similar
 
+
 **Built with ❤️ using Laravel 11, MongoDB, Redis, and Vue.js for easy deployment and scaling**

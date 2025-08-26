@@ -104,6 +104,18 @@ class FacebookProvider extends AbstractSocialMediaProvider
         return ['image', 'video', 'link', 'poll'];
     }
 
+    public function getDefaultScopes(): array
+    {
+        return [
+            'pages_manage_posts',
+            'pages_read_engagement',
+            'pages_show_list',
+            'publish_to_groups',
+            'instagram_basic',
+            'instagram_content_publish'
+        ];
+    }
+
     protected function formatPost(SocialMediaPost $post): array
     {
         $formatted = parent::formatPost($post);
