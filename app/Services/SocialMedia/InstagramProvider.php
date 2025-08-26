@@ -21,7 +21,7 @@ class InstagramProvider extends AbstractSocialMediaProvider
                 'expires_at' => now()->addDays(60),
                 'user_info' => [
                     'username' => 'insta_user_' . rand(1000, 9999),
-                    'display_name' => 'Instagram User',
+                'display_name' => 'Instagram User',
                     'avatar_url' => 'https://instagram.com/avatar.jpg',
                     'account_type' => 'BUSINESS',
                     'followers_count' => rand(100, 50000)
