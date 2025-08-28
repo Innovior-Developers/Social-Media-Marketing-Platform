@@ -949,6 +949,290 @@ Route::get('/test-all-new-models', function () {
     return response()->json($results, 200, [], JSON_PRETTY_PRINT);
 });
 
+
+// === SOCIAL MEDIA PROVIDER TEST ROUTES ===
+Route::prefix('test')->group(function () {
+
+    // Test all providers
+    Route::get('/providers', function () {
+        try {
+            $factory = new \App\Services\SocialMedia\SocialMediaProviderFactory();
+            $results = [];
+
+            foreach (['twitter', 'facebook', 'instagram', 'linkedin', 'youtube', 'tiktok'] as $provider) {
+                try {
+                    $adapter = $factory->create($provider);
+                    $results[$provider] = [
+                        'status' => 'available',
+                        'enabled' => $adapter->isEnabled(),
+                        'mode' => $adapter->isStubMode() ? 'stub' : 'real',
+                        'character_limit' => $adapter->getCharacterLimit(),
+                        'media_limit' => $adapter->getMediaLimit(),
+                        'supported_types' => $adapter->getSupportedMediaTypes(),
+                        'class' => get_class($adapter)
+                    ];
+                } catch (\Exception $e) {
+                    $results[$provider] = [
+                        'status' => 'error',
+                        'error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            return response()->json([
+                'mode' => config('services.social_media.mode', 'stub'),
+                'supported_providers' => $factory->getSupportedPlatforms(),
+                'provider_details' => $results,
+                'environment_check' => [
+                    'twitter_enabled' => config('services.twitter.enabled', false),
+                    'facebook_enabled' => config('services.facebook.enabled', false),
+                    'youtube_enabled' => config('services.youtube.enabled', false),
+                    'linkedin_enabled' => config('services.linkedin.enabled', false),
+                    'tiktok_enabled' => config('services.tiktok.enabled', false),
+                    'instagram_enabled' => config('services.instagram.enabled', false),
+                ],
+                'timestamp' => now()->toISOString(),
+                'developer' => 'J33WAKASUPUN'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Provider factory not found',
+                'message' => $e->getMessage(),
+                'suggestion' => 'Make sure SocialMediaProviderFactory exists'
+            ], 500);
+        }
+    });
+
+    // Test specific provider
+    Route::get('/provider/{platform}', function ($platform) {
+        try {
+            $factory = new \App\Services\SocialMedia\SocialMediaProviderFactory();
+            $provider = $factory->create($platform);
+
+            return response()->json([
+                'platform' => $platform,
+                'enabled' => $provider->isEnabled(),
+                'mode' => $provider->isStubMode() ? 'stub' : 'real',
+                'config_check' => [
+                    'client_id' => config("services.{$platform}.client_id") ? 'SET' : 'NOT SET',
+                    'client_secret' => config("services.{$platform}.client_secret") ? 'SET' : 'NOT SET',
+                ],
+                'auth_url' => $provider->getAuthUrl('test_state_123'),
+                'constraints' => [
+                    'character_limit' => $provider->getCharacterLimit(),
+                    'media_limit' => $provider->getMediaLimit(),
+                    'supported_media' => $provider->getSupportedMediaTypes(),
+                    'default_scopes' => $provider->getDefaultScopes(),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'platform' => $platform,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 400);
+        }
+    });
+
+    // Test OAuth flow
+    Route::get('/oauth/{platform}', function ($platform) {
+        try {
+            $factory = new \App\Services\SocialMedia\SocialMediaProviderFactory();
+            $provider = $factory->create($platform);
+
+            $authUrl = $provider->getAuthUrl('test_oauth_state');
+
+            return response()->json([
+                'platform' => $platform,
+                'auth_url' => $authUrl,
+                'instructions' => [
+                    'step_1' => 'Visit the auth_url to start OAuth flow',
+                    'step_2' => 'Grant permissions',
+                    'step_3' => 'You will be redirected back with code',
+                    'step_4' => 'Code will be exchanged for tokens automatically'
+                ],
+                'mode' => $provider->isStubMode() ? 'stub' : 'real',
+                'enabled' => $provider->isEnabled()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'platform' => $platform,
+                'error' => $e->getMessage(),
+                'suggestion' => 'Check if provider class exists and is properly configured'
+            ], 400);
+        }
+    });
+
+    // Test provider factory
+    Route::get('/factory', function () {
+        try {
+            $factory = new \App\Services\SocialMedia\SocialMediaProviderFactory();
+
+            return response()->json([
+                'factory_status' => 'working',
+                'supported_platforms' => $factory->getSupportedPlatforms(),
+                'factory_class' => get_class($factory),
+                'timestamp' => now()->toISOString()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'factory_status' => 'error',
+                'error' => $e->getMessage(),
+                'suggestion' => 'Create the SocialMediaProviderFactory class'
+            ], 500);
+        }
+    });
+});
+
+// === QUICK PROVIDER STATUS CHECK ===
+Route::get('/providers-status', function () {
+    $providers = [
+        'twitter' => [
+            'class_exists' => class_exists('App\Services\SocialMedia\TwitterProvider'),
+            'enabled' => config('services.twitter.enabled', false),
+            'client_id_set' => !empty(config('services.twitter.client_id')),
+        ],
+        'facebook' => [
+            'class_exists' => class_exists('App\Services\SocialMedia\FacebookProvider'),
+            'enabled' => config('services.facebook.enabled', false),
+            'client_id_set' => !empty(config('services.facebook.client_id')),
+        ],
+        'instagram' => [
+            'class_exists' => class_exists('App\Services\SocialMedia\InstagramProvider'),
+            'enabled' => config('services.instagram.enabled', false),
+            'client_id_set' => !empty(config('services.instagram.client_id')),
+        ],
+        'linkedin' => [
+            'class_exists' => class_exists('App\Services\SocialMedia\LinkedInProvider'),
+            'enabled' => config('services.linkedin.enabled', false),
+            'client_id_set' => !empty(config('services.linkedin.client_id')),
+        ],
+        'youtube' => [
+            'class_exists' => class_exists('App\Services\SocialMedia\YouTubeProvider'),
+            'enabled' => config('services.youtube.enabled', false),
+            'client_id_set' => !empty(config('services.youtube.client_id')),
+        ],
+        'tiktok' => [
+            'class_exists' => class_exists('App\Services\SocialMedia\TikTokProvider'),
+            'enabled' => config('services.tiktok.enabled', false),
+            'client_id_set' => !empty(config('services.tiktok.client_id')),
+        ]
+    ];
+
+    $factory_exists = class_exists('App\Services\SocialMedia\SocialMediaProviderFactory');
+    $abstract_exists = class_exists('App\Services\SocialMedia\AbstractSocialMediaProvider');
+
+    return response()->json([
+        'providers' => $providers,
+        'infrastructure' => [
+            'factory_exists' => $factory_exists,
+            'abstract_provider_exists' => $abstract_exists,
+            'services_config_exists' => file_exists(config_path('services.php')),
+        ],
+        'mode' => config('services.social_media.mode', 'stub'),
+        'recommendations' => [
+            'missing_classes' => array_keys(array_filter($providers, fn($p) => !$p['class_exists'])),
+            'missing_config' => array_keys(array_filter($providers, fn($p) => !$p['client_id_set'])),
+        ]
+    ]);
+});
+
+// Enhanced Email Test Route
+Route::get('/test/email', function () {
+    try {
+        // Test mail configuration
+        $config = [
+            'mailer' => config('mail.default'),
+            'host' => config('mail.mailers.smtp.host'),
+            'port' => config('mail.mailers.smtp.port'),
+            'username' => config('mail.mailers.smtp.username'),
+            'encryption' => config('mail.mailers.smtp.encryption'),
+            'from_address' => config('mail.from.address'),
+            'from_name' => config('mail.from.name'),
+        ];
+
+        // Create test data
+        $testPost = new \App\Models\SocialMediaPost([
+            'content' => [
+                'title' => 'LinkedIn Integration Test',
+                'text' => 'Testing email notifications from Social Media Marketing Platform! 🚀'
+            ]
+        ]);
+
+        $testResult = [
+            'success' => true,
+            'published_at' => now()->toISOString(),
+            'url' => 'https://linkedin.com/feed/update/test123',
+            'platform_id' => 'test_' . uniqid(),
+            'mode' => 'real'
+        ];
+
+        // Try to send email
+        \Illuminate\Support\Facades\Mail::to(config('services.notifications.default_recipient', 'admin@socialmedia.local'))
+            ->send(new \App\Mail\PostPublishedNotification($testPost, 'linkedin', $testResult));
+
+        return response()->json([
+            'email_test_status' => 'SUCCESS',
+            'message' => 'Test email sent successfully!',
+            'mail_config' => [
+                'mailer' => $config['mailer'],
+                'host' => $config['host'],
+                'port' => $config['port'],
+                'encryption' => $config['encryption'],
+                'username_set' => !empty($config['username']),
+                'from_address' => $config['from_address'],
+                'from_name' => $config['from_name'],
+            ],
+            'recipient' => config('services.notifications.default_recipient', 'admin@socialmedia.local'),
+            'timestamp' => now()->toISOString(),
+            'test_data' => [
+                'platform' => 'linkedin',
+                'post_title' => $testPost->content['title'],
+                'success' => $testResult['success'],
+                'mode' => $testResult['mode']
+            ]
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'email_test_status' => 'FAILED',
+            'error' => $e->getMessage(),
+            'mail_config' => [
+                'mailer' => config('mail.default'),
+                'host' => config('mail.mailers.smtp.host', 'not_configured'),
+                'port' => config('mail.mailers.smtp.port', 'not_configured'),
+                'username_set' => !empty(config('mail.mailers.smtp.username')),
+            ],
+            'suggestions' => [
+                'check_env_file' => 'Verify MAIL_* settings in .env',
+                'check_credentials' => 'Verify email credentials are correct',
+                'check_mail_class' => 'Ensure PostPublishedNotification class exists',
+                'try_mailtrap' => 'Consider using Mailtrap for testing'
+            ],
+            'timestamp' => now()->toISOString()
+        ], 500);
+    }
+});
+
+// Quick mail config check
+Route::get('/test/mail-config', function () {
+    return response()->json([
+        'mail_configuration' => [
+            'default_mailer' => config('mail.default'),
+            'smtp_host' => config('mail.mailers.smtp.host'),
+            'smtp_port' => config('mail.mailers.smtp.port'),
+            'smtp_encryption' => config('mail.mailers.smtp.encryption'),
+            'username_configured' => !empty(config('mail.mailers.smtp.username')),
+            'password_configured' => !empty(config('mail.mailers.smtp.password')),
+            'from_address' => config('mail.from.address'),
+            'from_name' => config('mail.from.name'),
+        ],
+        'notification_settings' => [
+            'enabled' => config('services.notifications.email_enabled', false),
+            'default_recipient' => config('services.notifications.default_recipient'),
+        ],
+        'timestamp' => now()->toISOString()
+    ]);
+});
 Route::get('/test-complete-environment', function () {
     try {
         $results = [
@@ -1154,6 +1438,417 @@ Route::get('/test-setup-complete', function () {
     ];
 
     return response()->json($results, 200, [], JSON_PRETTY_PRINT);
+});
+
+// OAuth callback route
+Route::get('/oauth/callback/{provider}', function ($provider, \Illuminate\Http\Request $request) {
+    try {
+        $code = $request->get('code');
+        $error = $request->get('error');
+
+        if ($error) {
+            return response()->json([
+                'oauth_status' => 'FAILED',
+                'error' => $error,
+                'provider' => $provider
+            ], 400);
+        }
+
+        if (!$code) {
+            return response()->json([
+                'oauth_status' => 'FAILED',
+                'error' => 'No authorization code received',
+                'provider' => $provider
+            ], 400);
+        }
+
+        // Handle LinkedIn specifically
+        if ($provider === 'linkedin') {
+            $clientId = config('services.linkedin.client_id');
+            $clientSecret = config('services.linkedin.client_secret');
+            $redirectUri = config('services.linkedin.redirect');
+
+            // Exchange code for tokens
+            $response = \Illuminate\Support\Facades\Http::withOptions([
+                'verify' => config('http.default.verify', true),
+                'timeout' => 30
+            ])->asForm()->post('https://www.linkedin.com/oauth/v2/accessToken', [
+                'grant_type' => 'authorization_code',
+                'code' => $code,
+                'redirect_uri' => $redirectUri,
+                'client_id' => $clientId,
+                'client_secret' => $clientSecret,
+            ]);
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'oauth_status' => 'FAILED',
+                    'error' => 'Token exchange failed',
+                    'response' => $response->body(),
+                    'status' => $response->status()
+                ], 400);
+            }
+
+            $tokenData = $response->json();
+            $sessionKey = "oauth_tokens_{$provider}_" . time();
+
+            $tokens = [
+                'access_token' => $tokenData['access_token'],
+                'expires_at' => now()->addSeconds($tokenData['expires_in'] ?? 3600)->toISOString(),
+                'token_type' => $tokenData['token_type'] ?? 'Bearer',
+                'scope' => explode(' ', $tokenData['scope'] ?? ''),
+                'provider' => $provider,
+                'created_at' => now()->toISOString()
+            ];
+
+            // Store in session with proper key
+            session([$sessionKey => $tokens]);
+
+            // Also store in a more persistent way
+            $sessionFile = storage_path("app/oauth_sessions/{$sessionKey}.json");
+            if (!is_dir(dirname($sessionFile))) {
+                mkdir(dirname($sessionFile), 0755, true);
+            }
+            file_put_contents($sessionFile, json_encode($tokens, JSON_PRETTY_PRINT));
+
+            return response()->json([
+                'oauth_status' => 'SUCCESS! 🎉',
+                'provider' => $provider,
+                'message' => 'LinkedIn OAuth completed successfully!',
+                'tokens_received' => [
+                    'access_token' => substr($tokens['access_token'], 0, 20) . '...',
+                    'expires_at' => $tokens['expires_at'],
+                    'token_type' => $tokens['token_type'],
+                    'scopes' => $tokens['scope']
+                ],
+                'session_key' => $sessionKey,
+                'session_stored' => session()->has($sessionKey),
+                'file_stored' => file_exists($sessionFile),
+                'next_steps' => [
+                    'test_profile' => "GET http://localhost:8000/test/linkedin/profile/{$sessionKey}",
+                    'test_posting' => "POST http://localhost:8000/test/linkedin/post/{$sessionKey}"
+                ],
+                'debug_info' => [
+                    'session_path' => $sessionFile,
+                    'session_exists' => session()->has($sessionKey),
+                    'scopes_granted' => $tokens['scope']
+                ]
+            ]);
+        }
+
+        return response()->json([
+            'oauth_status' => 'FAILED',
+            'error' => "Provider {$provider} not supported in this test route"
+        ], 400);
+    } catch (\Exception $e) {
+        return response()->json([
+            'oauth_status' => 'FAILED',
+            'provider' => $provider,
+            'error' => $e->getMessage()
+        ], 500);
+    }
+});
+
+// LinkedIn Real API Testing Routes
+// Test LinkedIn Profile Access
+Route::get('/test/linkedin/profile/{sessionKey}', function ($sessionKey) {
+    try {
+        // Try to get tokens from session first
+        $tokens = session($sessionKey);
+
+        // If not in session, try to load from file
+        if (!$tokens) {
+            $sessionFile = storage_path("app/oauth_sessions/{$sessionKey}.json");
+            if (file_exists($sessionFile)) {
+                $tokens = json_decode(file_get_contents($sessionFile), true);
+            }
+        }
+
+        if (!$tokens || !isset($tokens['access_token'])) {
+            return response()->json([
+                'profile_test' => 'FAILED',
+                'error' => 'No tokens found. Complete OAuth flow first.',
+                'session_key' => $sessionKey,
+                'debug' => [
+                    'session_exists' => session()->has($sessionKey),
+                    'session_file' => storage_path("app/oauth_sessions/{$sessionKey}.json"),
+                    'file_exists' => file_exists(storage_path("app/oauth_sessions/{$sessionKey}.json")),
+                    'available_sessions' => array_keys(session()->all())
+                ]
+            ], 400);
+        }
+
+        // Check if token is expired
+        $expiresAt = \Carbon\Carbon::parse($tokens['expires_at']);
+        if ($expiresAt->isPast()) {
+            return response()->json([
+                'profile_test' => 'FAILED',
+                'error' => 'Token expired. Please re-authenticate.',
+                'expires_at' => $tokens['expires_at'],
+                'current_time' => now()->toISOString()
+            ], 401);
+        }
+
+        // Test LinkedIn profile access with different endpoints
+        $accessToken = $tokens['access_token'];
+
+        // Try basic profile endpoint (OpenID Connect)
+        $profileResponse = \Illuminate\Support\Facades\Http::withToken($accessToken)
+            ->withHeaders([
+                'Accept' => 'application/json',
+                'X-Restli-Protocol-Version' => '2.0.0'
+            ])
+            ->get('https://api.linkedin.com/v2/userinfo');
+
+        if (!$profileResponse->successful()) {
+            // Try alternative endpoint
+            $altResponse = \Illuminate\Support\Facades\Http::withToken($accessToken)
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->get('https://api.linkedin.com/v2/people/~');
+
+            return response()->json([
+                'profile_test' => 'FAILED',
+                'error' => $profileResponse->body(),
+                'status' => $profileResponse->status(),
+                'alternative_tried' => $altResponse->body(),
+                'alternative_status' => $altResponse->status(),
+                'token_info' => [
+                    'scopes' => $tokens['scope'] ?? [],
+                    'expires_at' => $tokens['expires_at'],
+                    'token_type' => $tokens['token_type']
+                ],
+                'debug' => [
+                    'primary_endpoint' => 'https://api.linkedin.com/v2/userinfo',
+                    'alternative_endpoint' => 'https://api.linkedin.com/v2/people/~',
+                    'available_scopes' => $tokens['scope'] ?? []
+                ]
+            ], $profileResponse->status());
+        }
+
+        $profileData = $profileResponse->json();
+
+        return response()->json([
+            'profile_test' => 'SUCCESS',
+            'provider' => 'linkedin',
+            'mode' => 'real',
+            'profile_data' => $profileData,
+            'token_info' => [
+                'scopes' => $tokens['scope'] ?? [],
+                'expires_at' => $tokens['expires_at'],
+                'is_valid' => true
+            ]
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'profile_test' => 'FAILED',
+            'error' => $e->getMessage(),
+            'session_key' => $sessionKey
+        ], 500);
+    }
+});
+
+Route::get('/test/linkedin/debug-session/{sessionKey?}', function ($sessionKey = null) {
+    $sessionData = [];
+    $fileData = [];
+
+    if ($sessionKey) {
+        // Check specific session
+        $sessionData[$sessionKey] = session($sessionKey);
+
+        // Check file storage
+        $sessionFile = storage_path("app/oauth_sessions/{$sessionKey}.json");
+        if (file_exists($sessionFile)) {
+            $fileData[$sessionKey] = json_decode(file_get_contents($sessionFile), true);
+        }
+    } else {
+        // Get all sessions
+        $sessionData = session()->all();
+
+        // Get all files
+        $sessionDir = storage_path('app/oauth_sessions');
+        if (is_dir($sessionDir)) {
+            $files = glob($sessionDir . '/*.json');
+            foreach ($files as $file) {
+                $key = basename($file, '.json');
+                $fileData[$key] = json_decode(file_get_contents($file), true);
+            }
+        }
+    }
+
+    return response()->json([
+        'session_debug' => [
+            'requested_key' => $sessionKey,
+            'session_data' => $sessionData,
+            'file_data' => $fileData,
+            'session_storage_path' => storage_path('app/oauth_sessions'),
+            'available_session_keys' => array_keys($sessionData),
+            'available_file_keys' => array_keys($fileData)
+        ]
+    ]);
+});
+
+// Test LinkedIn Post Publishing
+Route::post('/test/linkedin/post/{sessionKey}', function ($sessionKey, \Illuminate\Http\Request $request) {
+    try {
+        $tokens = session($sessionKey);
+
+        if (!$tokens) {
+            return response()->json([
+                'error' => 'No tokens found. Complete OAuth flow first.',
+                'session_key' => $sessionKey
+            ], 400);
+        }
+
+        // Get post content from request or use default
+        $content = $request->input('content', 'Test post from Social Media Marketing Platform! 🚀 #socialmedia #linkedin #testing');
+
+        // Get LinkedIn profile first
+        $profileResponse = \Illuminate\Support\Facades\Http::withToken($tokens['access_token'])
+            ->get('https://api.linkedin.com/v2/me');
+
+        if (!$profileResponse->successful()) {
+            return response()->json([
+                'post_test' => 'FAILED',
+                'error' => 'Failed to get LinkedIn profile',
+                'profile_response' => $profileResponse->body()
+            ], 400);
+        }
+
+        $profileId = $profileResponse->json()['id'];
+
+        // Create LinkedIn post
+        $postData = [
+            'author' => "urn:li:person:{$profileId}",
+            'lifecycleState' => 'PUBLISHED',
+            'specificContent' => [
+                'com.linkedin.ugc.ShareContent' => [
+                    'shareCommentary' => [
+                        'text' => $content
+                    ],
+                    'shareMediaCategory' => 'NONE'
+                ]
+            ],
+            'visibility' => [
+                'com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC'
+            ]
+        ];
+
+        $response = \Illuminate\Support\Facades\Http::withToken($tokens['access_token'])
+            ->withHeaders([
+                'X-Restli-Protocol-Version' => '2.0.0',
+                'Content-Type' => 'application/json'
+            ])
+            ->post('https://api.linkedin.com/v2/ugcPosts', $postData);
+
+        if ($response->successful()) {
+            $responseData = $response->json();
+            $postId = last(explode(':', $responseData['id']));
+
+            // Send success email notification
+            try {
+                $testPost = new \App\Models\SocialMediaPost([
+                    'content' => ['title' => 'LinkedIn Real API Test', 'text' => $content]
+                ]);
+
+                $result = [
+                    'success' => true,
+                    'platform_id' => $postId,
+                    'url' => "https://www.linkedin.com/feed/update/{$responseData['id']}/",
+                    'published_at' => now()->toISOString(),
+                    'mode' => 'real'
+                ];
+
+                \Illuminate\Support\Facades\Mail::to(config('services.notifications.default_recipient'))
+                    ->send(new \App\Mail\PostPublishedNotification($testPost, 'linkedin', $result));
+
+                $emailSent = true;
+            } catch (\Exception $e) {
+                $emailSent = false;
+                $emailError = $e->getMessage();
+            }
+
+            return response()->json([
+                'post_test' => 'SUCCESS',
+                'message' => 'Post published successfully to LinkedIn!',
+                'post_data' => [
+                    'platform_id' => $postId,
+                    'linkedin_id' => $responseData['id'],
+                    'url' => "https://www.linkedin.com/feed/update/{$responseData['id']}/",
+                    'content' => $content,
+                    'published_at' => now()->toISOString()
+                ],
+                'email_notification' => [
+                    'sent' => $emailSent,
+                    'error' => $emailError ?? null
+                ],
+                'api_response' => $responseData
+            ]);
+        }
+
+        return response()->json([
+            'post_test' => 'FAILED',
+            'error' => $response->body(),
+            'status' => $response->status(),
+            'request_data' => $postData
+        ], 400);
+    } catch (\Exception $e) {
+        return response()->json([
+            'post_test' => 'ERROR',
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ], 500);
+    }
+});
+
+// List active OAuth sessions
+Route::get('/test/oauth/sessions', function () {
+    $sessions = [];
+
+    foreach (session()->all() as $key => $value) {
+        if (str_starts_with($key, 'oauth_tokens_')) {
+            $sessions[] = [
+                'session_key' => $key,
+                'provider' => explode('_', $key)[2] ?? 'unknown',
+                'created' => $value['expires_at'] ?? 'unknown',
+                'has_access_token' => !empty($value['access_token'])
+            ];
+        }
+    }
+
+    return response()->json([
+        'active_sessions' => $sessions,
+        'total_sessions' => count($sessions),
+        'instructions' => [
+            'test_profile' => 'GET /test/linkedin/profile/{sessionKey}',
+            'test_posting' => 'POST /test/linkedin/post/{sessionKey}'
+        ]
+    ]);
+});
+
+// debugging LinkedIn scopes
+Route::get('/test/linkedin/scopes', function () {
+    return response()->json([
+        'linkedin_scopes_info' => [
+            'default_scopes' => ['w_member_social', 'r_liteprofile'],
+            'scope_descriptions' => [
+                'w_member_social' => 'Write access to post on LinkedIn',
+                'r_liteprofile' => 'Read access to basic profile info',
+                'r_emailaddress' => 'REQUIRES SPECIAL APPROVAL - not available for new apps'
+            ],
+            'recommended_for_testing' => ['w_member_social', 'r_liteprofile'],
+            'current_config' => config('services.linkedin.scopes'),
+            'auth_url_with_correct_scopes' => 'https://www.linkedin.com/oauth/v2/authorization?' . http_build_query([
+                'response_type' => 'code',
+                'client_id' => config('services.linkedin.client_id'),
+                'redirect_uri' => config('services.linkedin.redirect'),
+                'scope' => 'w_member_social r_liteprofile',
+                'state' => 'test_fixed_scopes'
+            ])
+        ]
+    ]);
 });
 
 // Step 1.1 completion confirmation
