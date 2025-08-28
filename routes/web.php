@@ -1691,116 +1691,151 @@ Route::get('/test/linkedin/debug-session/{sessionKey?}', function ($sessionKey =
 });
 
 // Test LinkedIn Post Publishing
-Route::post('/test/linkedin/post/{sessionKey}', function ($sessionKey, \Illuminate\Http\Request $request) {
-    try {
-        $tokens = session($sessionKey);
+Route::withoutMiddleware(['web'])->group(function () {
+    
+    Route::post('/test/linkedin/post/{sessionKey}', function ($sessionKey, \Illuminate\Http\Request $request) {
+        try {
+            // Try session first, then file storage
+            $tokens = session($sessionKey);
 
-        if (!$tokens) {
-            return response()->json([
-                'error' => 'No tokens found. Complete OAuth flow first.',
-                'session_key' => $sessionKey
-            ], 400);
-        }
+            if (!$tokens) {
+                // Try loading from file storage
+                $sessionFile = storage_path("app/oauth_sessions/{$sessionKey}.json");
+                if (file_exists($sessionFile)) {
+                    $tokens = json_decode(file_get_contents($sessionFile), true);
+                } else {
+                    return response()->json([
+                        'error' => 'No tokens found. Complete OAuth flow first.',
+                        'session_key' => $sessionKey,
+                        'session_file_checked' => $sessionFile,
+                        'session_file_exists' => false
+                    ], 400);
+                }
+            }
 
-        // Get post content from request or use default
-        $content = $request->input('content', 'Test post from Social Media Marketing Platform! 🚀 #socialmedia #linkedin #testing');
+            // Validate token
+            if (!isset($tokens['access_token'])) {
+                return response()->json([
+                    'error' => 'Invalid token data.',
+                    'tokens_structure' => array_keys($tokens)
+                ], 400);
+            }
 
-        // Get LinkedIn profile first
-        $profileResponse = \Illuminate\Support\Facades\Http::withToken($tokens['access_token'])
-            ->get('https://api.linkedin.com/v2/me');
+            // Get post content from request or use default
+            $content = $request->input('content', 'Test post from Social Media Marketing Platform! 🚀 #socialmedia #linkedin #testing');
 
-        if (!$profileResponse->successful()) {
-            return response()->json([
-                'post_test' => 'FAILED',
-                'error' => 'Failed to get LinkedIn profile',
-                'profile_response' => $profileResponse->body()
-            ], 400);
-        }
+            // Get LinkedIn profile using the correct endpoint
+            $profileResponse = \Illuminate\Support\Facades\Http::withToken($tokens['access_token'])
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->get('https://api.linkedin.com/v2/userinfo'); // Updated endpoint
 
-        $profileId = $profileResponse->json()['id'];
+            if (!$profileResponse->successful()) {
+                return response()->json([
+                    'post_test' => 'FAILED',
+                    'error' => 'Failed to get LinkedIn profile',
+                    'profile_response' => $profileResponse->body(),
+                    'status' => $profileResponse->status()
+                ], 400);
+            }
 
-        // Create LinkedIn post
-        $postData = [
-            'author' => "urn:li:person:{$profileId}",
-            'lifecycleState' => 'PUBLISHED',
-            'specificContent' => [
-                'com.linkedin.ugc.ShareContent' => [
-                    'shareCommentary' => [
-                        'text' => $content
-                    ],
-                    'shareMediaCategory' => 'NONE'
+            $profile = $profileResponse->json();
+            $profileId = $profile['sub']; // Use 'sub' field from userinfo endpoint
+
+            // Create LinkedIn post
+            $postData = [
+                'author' => "urn:li:person:{$profileId}",
+                'lifecycleState' => 'PUBLISHED',
+                'specificContent' => [
+                    'com.linkedin.ugc.ShareContent' => [
+                        'shareCommentary' => [
+                            'text' => $content
+                        ],
+                        'shareMediaCategory' => 'NONE'
+                    ]
+                ],
+                'visibility' => [
+                    'com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC'
                 ]
-            ],
-            'visibility' => [
-                'com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC'
-            ]
-        ];
+            ];
 
-        $response = \Illuminate\Support\Facades\Http::withToken($tokens['access_token'])
-            ->withHeaders([
-                'X-Restli-Protocol-Version' => '2.0.0',
-                'Content-Type' => 'application/json'
-            ])
-            ->post('https://api.linkedin.com/v2/ugcPosts', $postData);
+            $response = \Illuminate\Support\Facades\Http::withToken($tokens['access_token'])
+                ->withHeaders([
+                    'X-Restli-Protocol-Version' => '2.0.0',
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
+                ])
+                ->post('https://api.linkedin.com/v2/ugcPosts', $postData);
 
-        if ($response->successful()) {
-            $responseData = $response->json();
-            $postId = last(explode(':', $responseData['id']));
+            if ($response->successful()) {
+                $responseData = $response->json();
+                $postId = $responseData['id'] ?? 'unknown';
 
-            // Send success email notification
-            try {
-                $testPost = new \App\Models\SocialMediaPost([
-                    'content' => ['title' => 'LinkedIn Real API Test', 'text' => $content]
+                // Send success email notification
+                try {
+                    $testPost = new \App\Models\SocialMediaPost([
+                        'content' => ['title' => 'LinkedIn Real API Test', 'text' => $content]
+                    ]);
+
+                    $result = [
+                        'success' => true,
+                        'platform_id' => $postId,
+                        'url' => "https://www.linkedin.com/feed/update/{$postId}/",
+                        'published_at' => now()->toISOString(),
+                        'mode' => 'real'
+                    ];
+
+                    \Illuminate\Support\Facades\Mail::to(config('services.notifications.default_recipient'))
+                        ->send(new \App\Mail\PostPublishedNotification($testPost, 'linkedin', $result));
+
+                    $emailSent = true;
+                } catch (\Exception $e) {
+                    $emailSent = false;
+                    $emailError = $e->getMessage();
+                }
+
+                return response()->json([
+                    'post_test' => 'SUCCESS! 🎉',
+                    'message' => 'Post published successfully to LinkedIn!',
+                    'post_data' => [
+                        'platform_id' => $postId,
+                        'linkedin_id' => $responseData['id'] ?? 'unknown',
+                        'url' => "https://www.linkedin.com/feed/update/{$postId}/",
+                        'content' => $content,
+                        'published_at' => now()->toISOString(),
+                        'author' => "urn:li:person:{$profileId}"
+                    ],
+                    'email_notification' => [
+                        'sent' => $emailSent ?? false,
+                        'error' => $emailError ?? null
+                    ],
+                    'api_response' => $responseData,
+                    'debug_info' => [
+                        'profile_id' => $profileId,
+                        'token_source' => $tokens ? 'session/file' : 'none'
+                    ]
                 ]);
-
-                $result = [
-                    'success' => true,
-                    'platform_id' => $postId,
-                    'url' => "https://www.linkedin.com/feed/update/{$responseData['id']}/",
-                    'published_at' => now()->toISOString(),
-                    'mode' => 'real'
-                ];
-
-                \Illuminate\Support\Facades\Mail::to(config('services.notifications.default_recipient'))
-                    ->send(new \App\Mail\PostPublishedNotification($testPost, 'linkedin', $result));
-
-                $emailSent = true;
-            } catch (\Exception $e) {
-                $emailSent = false;
-                $emailError = $e->getMessage();
             }
 
             return response()->json([
-                'post_test' => 'SUCCESS',
-                'message' => 'Post published successfully to LinkedIn!',
-                'post_data' => [
-                    'platform_id' => $postId,
-                    'linkedin_id' => $responseData['id'],
-                    'url' => "https://www.linkedin.com/feed/update/{$responseData['id']}/",
-                    'content' => $content,
-                    'published_at' => now()->toISOString()
-                ],
-                'email_notification' => [
-                    'sent' => $emailSent,
-                    'error' => $emailError ?? null
-                ],
-                'api_response' => $responseData
-            ]);
-        }
+                'post_test' => 'FAILED',
+                'error' => 'LinkedIn API rejected the post',
+                'api_error' => $response->body(),
+                'status' => $response->status(),
+                'request_data' => $postData
+            ], 400);
 
-        return response()->json([
-            'post_test' => 'FAILED',
-            'error' => $response->body(),
-            'status' => $response->status(),
-            'request_data' => $postData
-        ], 400);
-    } catch (\Exception $e) {
-        return response()->json([
-            'post_test' => 'ERROR',
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ], 500);
-    }
+        } catch (\Exception $e) {
+            return response()->json([
+                'post_test' => 'ERROR',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+    
 });
 
 // List active OAuth sessions
