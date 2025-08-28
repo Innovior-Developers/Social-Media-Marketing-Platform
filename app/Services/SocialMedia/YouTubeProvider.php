@@ -20,7 +20,7 @@ class YouTubeProvider extends AbstractSocialMediaProvider
         
         if (!$this->isStubMode) {
             $this->initializeGoogleClient();
-        }
+        }   
     }
 
     private function initializeGoogleClient()
