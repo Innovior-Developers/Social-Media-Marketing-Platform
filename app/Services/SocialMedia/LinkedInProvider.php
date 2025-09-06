@@ -186,16 +186,97 @@ class LinkedInProvider extends AbstractSocialMediaProvider
             $profileId = $profile['sub'];
             $formatted = $this->formatPost($post);
 
+            // 🔥 CHECK FOR MEDIA AND HANDLE ACCORDINGLY
+            $hasMedia = !empty($post->media);
+            $mediaUrns = [];
+            $mediaUploadResults = [];
+
+            // 🔥 ENHANCED MEDIA PROCESSING FOR CAROUSEL POSTS
+            if ($hasMedia) {
+                Log::info('LinkedIn: Processing multiple images for carousel', [
+                    'media_count' => count($post->media),
+                    'media_types' => array_column($post->media, 'type')
+                ]);
+
+                // Upload ALL media files (not just the first one)
+                foreach ($post->media as $index => $media) {
+                    Log::info('LinkedIn: Uploading image for carousel', [
+                        'index' => $index + 1,
+                        'total' => count($post->media),
+                        'name' => $media['name'] ?? "image_{$index}",
+                        'size' => $media['size'] ?? 'unknown'
+                    ]);
+
+                    $uploadResult = $this->uploadMediaToLinkedIn($media, $tokens['access_token'], $profileId);
+                    $mediaUploadResults[] = $uploadResult;
+
+                    if ($uploadResult['success']) {
+                        $mediaUrns[] = $uploadResult['media_urn'];
+                        Log::info('LinkedIn: Carousel image uploaded successfully', [
+                            'position' => $index + 1,
+                            'media_urn' => $uploadResult['media_urn'],
+                            'file_name' => $media['name'] ?? "image_{$index}"
+                        ]);
+                    } else {
+                        Log::error('LinkedIn: Carousel image upload failed', [
+                            'position' => $index + 1,
+                            'error' => $uploadResult['error'],
+                            'file_name' => $media['name'] ?? "image_{$index}"
+                        ]);
+                    }
+                }
+
+                // 🔥 ENHANCED CAROUSEL POST DATA STRUCTURE
+                if (!empty($mediaUrns)) {
+                    $shareContent['shareMediaCategory'] = count($mediaUrns) > 1 ? 'IMAGE' : 'IMAGE';
+
+                    // Create media array for carousel
+                    $shareContent['media'] = array_map(function ($urn, $index) {
+                        return [
+                            'status' => 'READY',
+                            'media' => $urn,
+                            'description' => [
+                                'text' => "Image " . ($index + 1)  // Optional: Add descriptions
+                            ]
+                        ];
+                    }, $mediaUrns, array_keys($mediaUrns));
+
+                    Log::info('LinkedIn: Carousel post structure created', [
+                        'media_count' => count($mediaUrns),
+                        'media_category' => $shareContent['shareMediaCategory'],
+                        'carousel_enabled' => count($mediaUrns) > 1
+                    ]);
+                }
+            }
+
+            // 🔥 BUILD POST DATA WITH OR WITHOUT MEDIA
+            $shareContent = [
+                'shareCommentary' => [
+                    'text' => $formatted['content']
+                ]
+            ];
+
+            if (!empty($mediaUrns)) {
+                // Determine media category based on first media type
+                $firstMediaType = $post->media[0]['type'] ?? 'image';
+                $mediaCategory = $this->getLinkedInMediaCategory($firstMediaType);
+
+                $shareContent['shareMediaCategory'] = $mediaCategory;
+                $shareContent['media'] = array_map(function ($urn) {
+                    return [
+                        'status' => 'READY',
+                        'media' => $urn
+                    ];
+                }, $mediaUrns);
+            } else {
+                $shareContent['shareMediaCategory'] = 'NONE';
+            }
+
             $postData = [
                 'author' => "urn:li:person:{$profileId}",
                 'lifecycleState' => 'PUBLISHED',
                 'specificContent' => [
-                    'com.linkedin.ugc.ShareContent' => [
-                        'shareCommentary' => [
-                            'text' => $formatted['content']
-                        ],
-                        'shareMediaCategory' => 'NONE'
-                    ]
+                    'com.linkedin.ugc.ShareContent' => $shareContent
                 ],
                 'visibility' => [
                     'com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC'
@@ -205,15 +286,20 @@ class LinkedInProvider extends AbstractSocialMediaProvider
             Log::info('LinkedIn: Attempting to publish post', [
                 'profile_id' => $profileId,
                 'content_length' => strlen($formatted['content']),
+                'has_media' => $hasMedia,
+                'media_count' => count($mediaUrns),
+                'media_category' => $shareContent['shareMediaCategory'],
                 'payload' => $postData
             ]);
 
+            // 🔥 PUBLISH POST (WITH OR WITHOUT MEDIA)
             $response = Http::withToken($tokens['access_token'])
                 ->withHeaders([
                     'X-Restli-Protocol-Version' => '2.0.0',
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json'
                 ])
+                ->timeout(120) // Extended timeout for posts with media
                 ->post('https://api.linkedin.com/v2/ugcPosts', $postData);
 
             if ($response->successful()) {
@@ -222,10 +308,11 @@ class LinkedInProvider extends AbstractSocialMediaProvider
 
                 Log::info('LinkedIn: Post published successfully', [
                     'post_id' => $postId,
-                    'linkedin_id' => $responseData['id']
+                    'linkedin_id' => $responseData['id'],
+                    'media_count' => count($mediaUrns)
                 ]);
 
-                return [
+                $successResponse = [
                     'success' => true,
                     'platform_id' => $postId,
                     'url' => "https://www.linkedin.com/feed/update/{$postId}/",
@@ -233,6 +320,18 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                     'platform_data' => $responseData,
                     'mode' => 'real'
                 ];
+
+                // Add media information if present
+                if ($hasMedia) {
+                    $successResponse['media_info'] = [
+                        'media_uploaded' => count($mediaUrns),
+                        'media_total' => count($post->media),
+                        'media_urns' => $mediaUrns,
+                        'upload_results' => $mediaUploadResults
+                    ];
+                }
+
+                return $successResponse;
             }
 
             Log::error('LinkedIn: Post publishing failed', [
@@ -246,6 +345,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 'error' => 'LinkedIn API error: ' . $response->body(),
                 'retryable' => $this->isRetryableError($response->status()),
                 'mode' => 'real',
+                'media_upload_results' => $mediaUploadResults,
                 'debug_info' => [
                     'status_code' => $response->status(),
                     'payload_sent' => $postData,
@@ -254,6 +354,584 @@ class LinkedInProvider extends AbstractSocialMediaProvider
             ];
         } catch (\Exception $e) {
             Log::error('LinkedIn: Post publishing exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'retryable' => true,
+                'mode' => 'real'
+            ];
+        }
+    }
+
+    /**
+     * Upload media to LinkedIn and get media URN
+     */
+    private function uploadMediaToLinkedIn(array $mediaFile, string $accessToken, string $profileId): array
+    {
+        try {
+            // Step 1: Register upload with LinkedIn
+            $registerResult = $this->registerLinkedInUpload($mediaFile, $accessToken, $profileId);
+
+            if (!$registerResult['success']) {
+                return $registerResult;
+            }
+
+            // Step 2: Upload file to LinkedIn's servers
+            $uploadResult = $this->uploadFileToLinkedIn($mediaFile, $registerResult['upload_url']);
+
+            if (!$uploadResult['success']) {
+                return $uploadResult;
+            }
+
+            // Step 3: Wait and verify upload
+            sleep(3); // Give LinkedIn time to process
+            $verifyResult = $this->verifyLinkedInUpload($registerResult['media_urn'], $accessToken);
+
+            return [
+                'success' => true,
+                'media_urn' => $registerResult['media_urn'],
+                'upload_url' => $registerResult['upload_url'],
+                'file_info' => [
+                    'type' => $mediaFile['type'] ?? 'unknown',
+                    'size' => $mediaFile['size'] ?? 0,
+                    'name' => $mediaFile['name'] ?? 'unknown'
+                ],
+                'verification' => $verifyResult,
+                'upload_steps' => [
+                    'register' => $registerResult,
+                    'upload' => $uploadResult,
+                    'verify' => $verifyResult
+                ]
+            ];
+        } catch (\Exception $e) {
+            Log::error('LinkedIn: Media upload process failed', [
+                'error' => $e->getMessage(),
+                'media_type' => $mediaFile['type'] ?? 'unknown'
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'Media upload failed: ' . $e->getMessage(),
+                'media_type' => $mediaFile['type'] ?? 'unknown'
+            ];
+        }
+    }
+
+    /**
+     * Register media upload with LinkedIn
+     */
+    private function registerLinkedInUpload(array $mediaFile, string $accessToken, string $profileId): array
+    {
+        try {
+            $mediaType = $mediaFile['type'] ?? 'image';
+            $recipeType = $this->getLinkedInRecipeType($mediaType);
+
+            $payload = [
+                'registerUploadRequest' => [
+                    'recipes' => [$recipeType],
+                    'owner' => "urn:li:person:{$profileId}",
+                    'serviceRelationships' => [
+                        [
+                            'relationshipType' => 'OWNER',
+                            'identifier' => 'urn:li:userGeneratedContent'
+                        ]
+                    ]
+                ]
+            ];
+
+            Log::info('LinkedIn: Registering media upload', [
+                'media_type' => $mediaType,
+                'recipe_type' => $recipeType
+            ]);
+
+            $response = Http::withToken($accessToken)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->timeout(30)
+                ->post('https://api.linkedin.com/v2/assets?action=registerUpload', $payload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                return [
+                    'success' => true,
+                    'upload_url' => $data['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl'],
+                    'media_urn' => $data['value']['asset'],
+                    'registration_data' => $data
+                ];
+            }
+
+            Log::error('LinkedIn: Upload registration failed', [
+                'status' => $response->status(),
+                'response' => $response->body(),
+                'payload' => $payload
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'Upload registration failed: ' . $response->body(),
+                'status_code' => $response->status()
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Registration exception: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Verify media upload status
+     */
+    private function verifyLinkedInUpload(string $mediaUrn, string $accessToken): array
+    {
+        try {
+            $response = Http::withToken($accessToken)
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->timeout(15)
+                ->get("https://api.linkedin.com/v2/assets/{$mediaUrn}");
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $status = $data['recipes'][0]['status'] ?? 'UNKNOWN';
+
+                return [
+                    'success' => true,
+                    'status' => $status,
+                    'ready' => $status === 'AVAILABLE',
+                    'processing' => $status === 'PROCESSING',
+                    'verification_data' => $data
+                ];
+            }
+
+            return [
+                'success' => false,
+                'error' => 'Verification failed: ' . $response->body()
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Verification exception: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Get LinkedIn recipe type for media
+     */
+    private function getLinkedInRecipeType(string $mediaType): string
+    {
+        $recipeMap = [
+            'image' => 'urn:li:digitalmediaRecipe:feedshare-image',
+            'video' => 'urn:li:digitalmediaRecipe:feedshare-video',
+            'document' => 'urn:li:digitalmediaRecipe:feedshare-document'
+        ];
+
+        return $recipeMap[$mediaType] ?? $recipeMap['image'];
+    }
+
+    /**
+     * Get LinkedIn media category
+     */
+    private function getLinkedInMediaCategory(string $mediaType): string
+    {
+        $categoryMap = [
+            'image' => 'IMAGE',
+            'video' => 'VIDEO',
+            'document' => 'RICH'
+        ];
+
+        return $categoryMap[$mediaType] ?? 'IMAGE';
+    }
+
+    /**
+     * Upload media to LinkedIn and get media URN
+     */
+    private function uploadMedia(array $mediaFile, string $accessToken, string $profileId): array
+    {
+        try {
+            Log::info('LinkedIn: Starting media upload', [
+                'file_type' => $mediaFile['type'],
+                'file_size' => $mediaFile['size'] ?? 'unknown'
+            ]);
+
+            // Step 1: Register upload with LinkedIn
+            $registerResponse = $this->registerMediaUpload($mediaFile, $accessToken, $profileId);
+
+            if (!$registerResponse['success']) {
+                return $registerResponse;
+            }
+
+            $uploadUrl = $registerResponse['upload_url'];
+            $mediaUrn = $registerResponse['media_urn'];
+
+            // Step 2: Upload actual file to LinkedIn's upload URL
+            $uploadResponse = $this->uploadFileToLinkedIn($mediaFile, $uploadUrl);
+
+            if (!$uploadResponse['success']) {
+                return $uploadResponse;
+            }
+
+            // Step 3: Verify upload completed
+            $verifyResponse = $this->verifyMediaUpload($mediaUrn, $accessToken);
+
+            return [
+                'success' => true,
+                'media_urn' => $mediaUrn,
+                'upload_url' => $uploadUrl,
+                'file_type' => $mediaFile['type'],
+                'verified' => $verifyResponse['success'] ?? false,
+                'upload_details' => [
+                    'registration' => $registerResponse,
+                    'upload' => $uploadResponse,
+                    'verification' => $verifyResponse
+                ]
+            ];
+        } catch (\Exception $e) {
+            Log::error('LinkedIn: Media upload failed', [
+                'error' => $e->getMessage(),
+                'file_type' => $mediaFile['type'] ?? 'unknown'
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'file_type' => $mediaFile['type'] ?? 'unknown'
+            ];
+        }
+    }
+
+    /**
+     * Register media upload with LinkedIn
+     */
+    private function registerMediaUpload(array $mediaFile, string $accessToken, string $profileId): array
+    {
+        try {
+            $mediaType = $this->getLinkedInMediaType($mediaFile['type']);
+
+            $registerPayload = [
+                'registerUploadRequest' => [
+                    'recipes' => ["urn:li:digitalmediaRecipe:feedshare-{$mediaType}"],
+                    'owner' => "urn:li:person:{$profileId}",
+                    'serviceRelationships' => [
+                        [
+                            'relationshipType' => 'OWNER',
+                            'identifier' => 'urn:li:userGeneratedContent'
+                        ]
+                    ]
+                ]
+            ];
+
+            Log::info('LinkedIn: Registering media upload', [
+                'media_type' => $mediaType,
+                'payload' => $registerPayload
+            ]);
+
+            $response = Http::withToken($accessToken)
+                ->withHeaders([
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->post('https://api.linkedin.com/v2/assets?action=registerUpload', $registerPayload);
+
+            if ($response->successful()) {
+                $data = $response->json();
+
+                return [
+                    'success' => true,
+                    'upload_url' => $data['value']['uploadMechanism']['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']['uploadUrl'],
+                    'media_urn' => $data['value']['asset'],
+                    'registration_data' => $data
+                ];
+            }
+
+            Log::error('LinkedIn: Media registration failed', [
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'Media registration failed: ' . $response->body(),
+                'status_code' => $response->status()
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Upload file to LinkedIn's upload URL
+     */
+    private function uploadFileToLinkedIn(array $mediaFile, string $uploadUrl): array
+    {
+        try {
+            Log::info('LinkedIn: Uploading file to LinkedIn servers', [
+                'upload_url_length' => strlen($uploadUrl),
+                'file_size' => $mediaFile['size'] ?? 'unknown'
+            ]);
+
+            // Read file content
+            $fileContent = file_get_contents($mediaFile['path']);
+
+            if ($fileContent === false) {
+                return [
+                    'success' => false,
+                    'error' => 'Could not read file: ' . $mediaFile['path']
+                ];
+            }
+
+            // Upload file as binary data
+            $response = Http::withHeaders([
+                'Content-Type' => $mediaFile['mime_type'],
+                'Content-Length' => strlen($fileContent)
+            ])
+                ->timeout(120) // Extended timeout for large files
+                ->withBody($fileContent, $mediaFile['mime_type'])
+                ->put($uploadUrl);
+
+            if ($response->successful()) {
+                Log::info('LinkedIn: File uploaded successfully');
+
+                return [
+                    'success' => true,
+                    'status_code' => $response->status(),
+                    'upload_completed' => true
+                ];
+            }
+
+            Log::error('LinkedIn: File upload failed', [
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'File upload failed: ' . $response->body(),
+                'status_code' => $response->status()
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Verify media upload completed
+     */
+    private function verifyMediaUpload(string $mediaUrn, string $accessToken): array
+    {
+        try {
+            // Wait a bit for processing
+            sleep(2);
+
+            $response = Http::withToken($accessToken)
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->get("https://api.linkedin.com/v2/assets/{$mediaUrn}");
+
+            if ($response->successful()) {
+                $data = $response->json();
+                $status = $data['recipes'][0]['status'] ?? 'UNKNOWN';
+
+                return [
+                    'success' => true,
+                    'status' => $status,
+                    'ready' => $status === 'AVAILABLE',
+                    'verification_data' => $data
+                ];
+            }
+
+            return [
+                'success' => false,
+                'error' => 'Verification failed: ' . $response->body()
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Get LinkedIn media type from file type
+     */
+    private function getLinkedInMediaType(string $fileType): string
+    {
+        $typeMap = [
+            'image' => 'image',
+            'video' => 'video',
+            'document' => 'document'
+        ];
+
+        return $typeMap[$fileType] ?? 'image';
+    }
+
+    /**
+     * Enhanced publishRealPost with media support
+     */
+    private function publishRealPostWithMedia(SocialMediaPost $post, Channel $channel): array
+    {
+        try {
+            $tokens = $channel->oauth_tokens;
+            if (is_string($tokens)) {
+                $tokens = decrypt($tokens);
+            }
+
+            // Get user profile ID
+            $profileResponse = Http::withToken($tokens['access_token'])
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->get('https://api.linkedin.com/v2/userinfo');
+
+            if (!$profileResponse->successful()) {
+                throw new \Exception('Failed to get LinkedIn profile: ' . $profileResponse->body());
+            }
+
+            $profile = $profileResponse->json();
+            $profileId = $profile['sub'];
+            $formatted = $this->formatPost($post);
+
+            // 🔥 HANDLE MEDIA UPLOADS
+            $mediaUrns = [];
+            $uploadedMedia = [];
+
+            if (!empty($post->media)) {
+                Log::info('LinkedIn: Processing media uploads', [
+                    'media_count' => count($post->media),
+                    'media_types' => array_column($post->media, 'type')
+                ]);
+
+                foreach ($post->media as $media) {
+                    $uploadResult = $this->uploadMedia($media, $tokens['access_token'], $profileId);
+
+                    if ($uploadResult['success']) {
+                        $mediaUrns[] = $uploadResult['media_urn'];
+                        $uploadedMedia[] = $uploadResult;
+
+                        Log::info('LinkedIn: Media uploaded successfully', [
+                            'media_urn' => $uploadResult['media_urn'],
+                            'file_type' => $media['type']
+                        ]);
+                    } else {
+                        Log::error('LinkedIn: Media upload failed', [
+                            'error' => $uploadResult['error'],
+                            'file_type' => $media['type']
+                        ]);
+
+                        // Decide whether to fail the entire post or continue without this media
+                        // For now, we'll continue but log the failure
+                    }
+                }
+            }
+
+            // 🔥 BUILD POST DATA WITH MEDIA
+            $shareContent = [
+                'shareCommentary' => [
+                    'text' => $formatted['content']
+                ]
+            ];
+
+            if (!empty($mediaUrns)) {
+                $shareContent['shareMediaCategory'] = 'IMAGE'; // or VIDEO, RICH, etc.
+                $shareContent['media'] = array_map(function ($urn) {
+                    return [
+                        'status' => 'READY',
+                        'media' => $urn
+                    ];
+                }, $mediaUrns);
+            } else {
+                $shareContent['shareMediaCategory'] = 'NONE';
+            }
+
+            $postData = [
+                'author' => "urn:li:person:{$profileId}",
+                'lifecycleState' => 'PUBLISHED',
+                'specificContent' => [
+                    'com.linkedin.ugc.ShareContent' => $shareContent
+                ],
+                'visibility' => [
+                    'com.linkedin.ugc.MemberNetworkVisibility' => 'PUBLIC'
+                ]
+            ];
+
+            Log::info('LinkedIn: Publishing post with media', [
+                'media_count' => count($mediaUrns),
+                'content_length' => strlen($formatted['content']),
+                'payload' => $postData
+            ]);
+
+            // 🔥 PUBLISH POST WITH MEDIA
+            $response = Http::withToken($tokens['access_token'])
+                ->withHeaders([
+                    'X-Restli-Protocol-Version' => '2.0.0',
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
+                ])
+                ->timeout(60) // Extended timeout for posts with media
+                ->post('https://api.linkedin.com/v2/ugcPosts', $postData);
+
+            if ($response->successful()) {
+                $responseData = $response->json();
+                $postId = $responseData['id'] ?? 'unknown';
+
+                Log::info('LinkedIn: Post with media published successfully', [
+                    'post_id' => $postId,
+                    'media_count' => count($mediaUrns)
+                ]);
+
+                return [
+                    'success' => true,
+                    'platform_id' => $postId,
+                    'url' => "https://www.linkedin.com/feed/update/{$postId}/",
+                    'published_at' => now()->toISOString(),
+                    'platform_data' => $responseData,
+                    'media_uploaded' => $uploadedMedia,
+                    'media_count' => count($mediaUrns),
+                    'mode' => 'real'
+                ];
+            }
+
+            Log::error('LinkedIn: Post with media publishing failed', [
+                'status' => $response->status(),
+                'response' => $response->body()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'LinkedIn API error: ' . $response->body(),
+                'retryable' => $this->isRetryableError($response->status()),
+                'mode' => 'real',
+                'media_uploaded' => $uploadedMedia,
+                'debug_info' => [
+                    'status_code' => $response->status(),
+                    'payload_sent' => $postData,
+                    'api_response' => $response->body()
+                ]
+            ];
+        } catch (\Exception $e) {
+            Log::error('LinkedIn: Post with media publishing exception', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

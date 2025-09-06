@@ -16,6 +16,48 @@ use App\Models\Brand;
 use App\Models\Membership;
 use App\Models\Channel;
 
+if (!function_exists('validateMediaFile')) {
+    function validateMediaFile($file, $mediaType)
+    {
+        if (!$file) {
+            return ['valid' => false, 'error' => 'No file uploaded'];
+        }
+
+        switch ($mediaType) {
+            case 'image':
+                $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif'];
+                $maxSize = 20 * 1024 * 1024; // 20MB
+                break;
+            case 'video':
+                $allowedExtensions = ['mp4', 'mov', 'avi', 'wmv'];
+                $maxSize = 200 * 1024 * 1024; // 200MB
+                break;
+            case 'document':
+                $allowedExtensions = ['pdf', 'doc', 'docx', 'ppt', 'pptx'];
+                $maxSize = 100 * 1024 * 1024; // 100MB
+                break;
+            default:
+                return ['valid' => false, 'error' => 'Unsupported media type'];
+        }
+
+        $extension = strtolower($file->getClientOriginalExtension());
+        if (!in_array($extension, $allowedExtensions)) {
+            return [
+                'valid' => false,
+                'error' => "Only " . implode(', ', $allowedExtensions) . " files are supported for {$mediaType}"
+            ];
+        }
+
+        if ($file->getSize() > $maxSize) {
+            return [
+                'valid' => false,
+                'error' => ucfirst($mediaType) . " must be smaller than " . ($maxSize / 1024 / 1024) . "MB"
+            ];
+        }
+
+        return ['valid' => true];
+    }
+}
 
 Route::get('/', function () {
     return [
@@ -2064,6 +2106,230 @@ Route::withoutMiddleware(['web'])->group(function () {
                     'jobs_available' => class_exists('\App\Jobs\CollectAnalytics'),
                     'request_data' => $request->all()
                 ]
+            ], 500);
+        }
+    });
+});
+
+Route::withoutMiddleware(['web', \App\Http\Middleware\VerifyCsrfToken::class])->group(function () {
+
+    Route::post('/test/linkedin/multi-image-post/{tokenFile}', function ($tokenFile, \Illuminate\Http\Request $request) {
+        try {
+            // Validate token file parameter
+            if (!str_starts_with($tokenFile, 'oauth_tokens_linkedin_')) {
+                return response()->json([
+                    'error' => 'Invalid token file format',
+                    'expected_format' => 'oauth_tokens_linkedin_XXXXXXXXXX',
+                    'received' => $tokenFile
+                ], 400);
+            }
+
+            // 🔥 HANDLE MULTIPLE IMAGE UPLOADS
+            $uploadedImages = [];
+            $totalImagesUploaded = 0;
+
+            // Check for multiple image fields (image1, image2, image3, etc.)
+            for ($i = 1; $i <= 9; $i++) {
+                if ($request->hasFile("image{$i}")) {
+                    $uploadedImages[] = [
+                        'file' => $request->file("image{$i}"),
+                        'field_name' => "image{$i}",
+                        'index' => $i
+                    ];
+                    $totalImagesUploaded++;
+                }
+            }
+
+            // Also check for single 'image' field
+            if ($request->hasFile('image')) {
+                $uploadedImages[] = [
+                    'file' => $request->file('image'),
+                    'field_name' => 'image',
+                    'index' => 0
+                ];
+                $totalImagesUploaded++;
+            }
+
+            // Check for array of images (images[])
+            if ($request->hasFile('images')) {
+                $imageArray = $request->file('images');
+                if (is_array($imageArray)) {
+                    foreach ($imageArray as $index => $imageFile) {
+                        $uploadedImages[] = [
+                            'file' => $imageFile,
+                            'field_name' => "images[{$index}]",
+                            'index' => $index + 100 // Offset to avoid conflicts
+                        ];
+                        $totalImagesUploaded++;
+                    }
+                }
+            }
+
+            if (empty($uploadedImages)) {
+                return response()->json([
+                    'error' => 'No images uploaded',
+                    'supported_fields' => [
+                        'single_image' => 'image',
+                        'multiple_images' => 'image1, image2, image3, ... up to image9',
+                        'array_images' => 'images[] (array of files)'
+                    ],
+                    'usage_examples' => [
+                        'single' => 'Form field: image=<file>',
+                        'multiple' => 'Form fields: image1=<file1>, image2=<file2>, image3=<file3>',
+                        'array' => 'Form field: images[]=<file1>, images[]=<file2>'
+                    ]
+                ], 400);
+            }
+
+            // LinkedIn supports maximum 9 images
+            if ($totalImagesUploaded > 9) {
+                return response()->json([
+                    'error' => 'LinkedIn supports maximum 9 images per post',
+                    'uploaded_count' => $totalImagesUploaded,
+                    'limit' => 9
+                ], 400);
+            }
+
+            $text = $request->get('text', "🔥 Testing LinkedIn multiple image posting with {$totalImagesUploaded} images! #MultiImage #LinkedInTest #MediaUpload");
+
+            // 🔥 VALIDATE ALL IMAGES
+            $validatedImages = [];
+            $validationErrors = [];
+
+            foreach ($uploadedImages as $imageData) {
+                $validation = validateMediaFile($imageData['file'], 'image');
+                if ($validation['valid']) {
+                    $validatedImages[] = [
+                        'type' => 'image',
+                        'path' => $imageData['file']->getRealPath(),
+                        'tmp_name' => $imageData['file']->getRealPath(),
+                        'mime_type' => $imageData['file']->getMimeType(),
+                        'size' => $imageData['file']->getSize(),
+                        'name' => $imageData['file']->getClientOriginalName(),
+                        'field_name' => $imageData['field_name'],
+                        'index' => $imageData['index']
+                    ];
+                } else {
+                    $validationErrors[] = [
+                        'field' => $imageData['field_name'],
+                        'error' => $validation['error'],
+                        'file_name' => $imageData['file']->getClientOriginalName()
+                    ];
+                }
+            }
+
+            if (!empty($validationErrors)) {
+                return response()->json([
+                    'error' => 'Some images failed validation',
+                    'validation_errors' => $validationErrors,
+                    'valid_images' => count($validatedImages),
+                    'total_images' => count($uploadedImages)
+                ], 400);
+            }
+
+            // 🔥 GET USER-SPECIFIC TOKEN FILE
+            $tokenPath = storage_path("app/oauth_sessions/{$tokenFile}.json");
+
+            if (!file_exists($tokenPath)) {
+                return response()->json([
+                    'error' => 'LinkedIn token file not found',
+                    'token_file' => $tokenFile,
+                    'expected_path' => $tokenPath
+                ], 404);
+            }
+
+            $tokenData = json_decode(file_get_contents($tokenPath), true);
+
+            if (!isset($tokenData['access_token'])) {
+                return response()->json([
+                    'error' => 'Invalid LinkedIn token in file',
+                    'token_file' => $tokenFile
+                ], 400);
+            }
+
+            $userId = str_replace(['oauth_tokens_linkedin_', '.json'], '', $tokenFile);
+
+            // 🔥 CREATE MULTI-IMAGE POST OBJECT
+            $post = new \App\Models\SocialMediaPost([
+                'content' => ['text' => $text],
+                'media' => $validatedImages, // Multiple images array
+                'platforms' => ['linkedin'],
+                'user_id' => 'J33WAKASUPUN_' . $userId,
+                'post_status' => 'publishing'
+            ]);
+
+            // Create channel with user's tokens
+            $channel = new \App\Models\Channel([
+                'oauth_tokens' => $tokenData,
+                'provider' => 'linkedin',
+                'user_id' => 'J33WAKASUPUN',
+                'channel_name' => 'LinkedIn - J33WAKASUPUN'
+            ]);
+
+            // Log multi-image posting attempt
+            \Illuminate\Support\Facades\Log::info('LinkedIn Multi-Image Test: Starting posting test', [
+                'user_id' => 'J33WAKASUPUN',
+                'token_file' => $tokenFile,
+                'image_count' => count($validatedImages),
+                'image_names' => array_column($validatedImages, 'name'),
+                'total_size' => array_sum(array_column($validatedImages, 'size'))
+            ]);
+
+            // 🔥 PUBLISH MULTI-IMAGE POST
+            $provider = new \App\Services\SocialMedia\LinkedInProvider();
+            $result = $provider->publishPost($post, $channel);
+
+            // 🔥 ENHANCED MULTI-IMAGE RESPONSE
+            return response()->json([
+                'test_result' => 'LINKEDIN_MULTI_IMAGE_POSTING_TEST',
+                'csrf_status' => 'EXEMPT (Fixed)',
+                'validation_status' => 'PASSED',
+                'user_context' => [
+                    'user_login' => 'J33WAKASUPUN',
+                    'token_file' => $tokenFile,
+                    'user_id' => $userId,
+                    'authenticated_user' => $tokenData['user_info'] ?? 'unknown'
+                ],
+                'multi_image_info' => [
+                    'total_images' => count($validatedImages),
+                    'image_details' => array_map(function ($img, $index) {
+                        return [
+                            'position' => $index + 1,
+                            'name' => $img['name'],
+                            'size' => $img['size'],
+                            'mime_type' => $img['mime_type'],
+                            'field_name' => $img['field_name']
+                        ];
+                    }, $validatedImages, array_keys($validatedImages)),
+                    'total_size' => array_sum(array_column($validatedImages, 'size')),
+                    'linkedin_limit' => '9 images maximum'
+                ],
+                'post_content' => $text,
+                'success' => $result['success'],
+                'publishing_result' => $result,
+                'endpoint_used' => "/test/linkedin/multi-image-post/{$tokenFile}",
+                'timestamp' => now()->toISOString(),
+                'test_status' => $result['success'] ? 'PASSED ✅' : 'FAILED ❌',
+                'carousel_post' => $result['success'] && count($validatedImages) > 1
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('LinkedIn Multi-Image Test: Exception occurred', [
+                'user_login' => 'J33WAKASUPUN',
+                'token_file' => $tokenFile ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'test_result' => 'ERROR',
+                'csrf_status' => 'EXEMPT (Fixed)',
+                'user_context' => [
+                    'user_login' => 'J33WAKASUPUN',
+                    'token_file' => $tokenFile ?? 'unknown'
+                ],
+                'error' => $e->getMessage(),
+                'error_location' => $e->getFile() . ':' . $e->getLine(),
+                'help' => 'Check the logs for detailed error information'
             ], 500);
         }
     });
