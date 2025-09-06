@@ -20,6 +20,7 @@ class VerifyCsrfToken extends Middleware
         
         // Specific routes for LinkedIn testing
         'test/linkedin/post/*',
+        'test/linkedin/media-post/*',
         'test/linkedin/profile/*',
         'test/provider/*',
         'test/oauth/*',
