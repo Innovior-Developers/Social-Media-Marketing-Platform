@@ -47,9 +47,9 @@ class SocialMediaPostController extends Controller
 
             // Search in content
             if ($request->has('search')) {
-                $query->where(function($q) use ($request) {
+                $query->where(function ($q) use ($request) {
                     $q->where('content.text', 'like', '%' . $request->search . '%')
-                      ->orWhere('content.title', 'like', '%' . $request->search . '%');
+                        ->orWhere('content.title', 'like', '%' . $request->search . '%');
                 });
             }
 
@@ -73,7 +73,6 @@ class SocialMediaPostController extends Controller
                     'total' => $posts->total(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -132,7 +131,7 @@ class SocialMediaPostController extends Controller
             }
 
             $validated['user_id'] = $user->_id;
-            
+
             // Set status based on scheduling
             if (isset($validated['scheduled_at'])) {
                 $validated['post_status'] = 'scheduled';
@@ -164,7 +163,6 @@ class SocialMediaPostController extends Controller
                     'remaining_posts' => $user->getRemainingPosts()
                 ]
             ], 201);
-
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -206,7 +204,6 @@ class SocialMediaPostController extends Controller
                     'platform_posts' => $post->platform_posts ?? [],
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -265,7 +262,6 @@ class SocialMediaPostController extends Controller
                 'message' => 'Post updated successfully',
                 'data' => $post->fresh()
             ]);
-
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -301,7 +297,6 @@ class SocialMediaPostController extends Controller
                 'status' => 'success',
                 'message' => 'Post deleted successfully'
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -327,29 +322,63 @@ class SocialMediaPostController extends Controller
                 ], 409);
             }
 
-            // Here you would implement actual publishing logic
-            // For now, we'll simulate it
+            $results = [];
+            $hasErrors = false;
 
-            $post->update([
-                'post_status' => 'published',
-                'published_at' => now()
-            ]);
-
-            // Update platform posts (simulated)
+            // 🔥 PUBLISH TO EACH PLATFORM USING YOUR PROVIDERS
             foreach ($post->platforms as $platform) {
-                $post->updatePlatformPost($platform, [
-                    'platform_id' => 'sim_' . uniqid(),
-                    'published_at' => now(),
-                    'url' => "https://{$platform}.com/post/sim_" . uniqid()
+                if ($platform === 'linkedin') {
+                    // Get user's LinkedIn channel
+                    $channel = \App\Models\Channel::where('provider', 'linkedin')
+                        ->where('connection_status', 'connected')
+                        ->first();
+
+                    if (!$channel) {
+                        $results[$platform] = [
+                            'success' => false,
+                            'error' => 'LinkedIn channel not connected'
+                        ];
+                        $hasErrors = true;
+                        continue;
+                    }
+
+                    // 🔥 USE YOUR LINKEDIN PROVIDER
+                    $provider = new \App\Services\SocialMedia\LinkedInProvider();
+                    $result = $provider->publishPost($post, $channel);
+
+                    $results[$platform] = $result;
+
+                    if ($result['success']) {
+                        // Update platform post data
+                        $post->updatePlatformPost($platform, [
+                            'platform_id' => $result['platform_id'],
+                            'published_at' => now(),
+                            'url' => $result['url']
+                        ]);
+
+                        // 🔥 DISPATCH ANALYTICS COLLECTION
+                        \App\Jobs\CollectAnalytics::dispatch($post, $platform);
+                    } else {
+                        $hasErrors = true;
+                    }
+                }
+                // Add other platforms here later
+            }
+
+            // Update post status
+            if (!$hasErrors) {
+                $post->update([
+                    'post_status' => 'published',
+                    'published_at' => now()
                 ]);
             }
 
             return response()->json([
-                'status' => 'success',
-                'message' => 'Post published successfully',
+                'status' => $hasErrors ? 'partial_success' : 'success',
+                'message' => $hasErrors ? 'Some platforms failed' : 'Post published successfully',
+                'results' => $results,
                 'data' => $post->fresh()
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -401,7 +430,6 @@ class SocialMediaPostController extends Controller
                 'message' => 'Post duplicated successfully',
                 'data' => $duplicatedPost
             ], 201);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -440,7 +468,6 @@ class SocialMediaPostController extends Controller
                     'summary' => $summary
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',

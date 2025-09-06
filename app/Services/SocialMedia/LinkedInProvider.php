@@ -161,11 +161,18 @@ class LinkedInProvider extends AbstractSocialMediaProvider
     private function publishRealPost(SocialMediaPost $post, Channel $channel): array
     {
         try {
-            $tokens = decrypt($channel->oauth_tokens);
+            $tokens = $channel->oauth_tokens; // Don't decrypt if already array
+            if (is_string($tokens)) {
+                $tokens = decrypt($tokens);
+            }
 
-            // Get user profile ID first
+            // Get user profile ID first - using your working endpoint
             $profileResponse = Http::withToken($tokens['access_token'])
-                ->get($this->getConfig('base_url') . '/v2/me');
+                ->withHeaders([
+                    'Accept' => 'application/json',
+                    'X-Restli-Protocol-Version' => '2.0.0'
+                ])
+                ->get('https://api.linkedin.com/v2/userinfo');
 
             if (!$profileResponse->successful()) {
                 Log::error('LinkedIn: Failed to get profile', [
@@ -175,9 +182,11 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 throw new \Exception('Failed to get LinkedIn profile: ' . $profileResponse->body());
             }
 
-            $profileId = $profileResponse->json()['id'];
+            $profile = $profileResponse->json();
+            $profileId = $profile['sub']; // Using 'sub' from userinfo endpoint
             $formatted = $this->formatPost($post);
 
+            // 🔥 CORRECTED LINKEDIN API PAYLOAD FORMAT
             $postData = [
                 'author' => "urn:li:person:{$profileId}",
                 'lifecycleState' => 'PUBLISHED',
@@ -196,19 +205,22 @@ class LinkedInProvider extends AbstractSocialMediaProvider
 
             Log::info('LinkedIn: Attempting to publish post', [
                 'profile_id' => $profileId,
-                'content_length' => strlen($formatted['content'])
+                'content_length' => strlen($formatted['content']),
+                'payload' => $postData
             ]);
 
+            // 🔥 UPDATED API CALL WITH CORRECT HEADERS
             $response = Http::withToken($tokens['access_token'])
                 ->withHeaders([
                     'X-Restli-Protocol-Version' => '2.0.0',
-                    'Content-Type' => 'application/json'
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json'
                 ])
-                ->post($this->getConfig('base_url') . '/v2/ugcPosts', $postData);
+                ->post('https://api.linkedin.com/v2/ugcPosts', $postData);
 
             if ($response->successful()) {
                 $responseData = $response->json();
-                $postId = last(explode(':', $responseData['id']));
+                $postId = $responseData['id'] ?? 'unknown';
 
                 Log::info('LinkedIn: Post published successfully', [
                     'post_id' => $postId,
@@ -218,7 +230,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 return [
                     'success' => true,
                     'platform_id' => $postId,
-                    'url' => "https://www.linkedin.com/feed/update/{$responseData['id']}/",
+                    'url' => "https://www.linkedin.com/feed/update/{$postId}/",
                     'published_at' => now()->toISOString(),
                     'platform_data' => $responseData,
                     'mode' => 'real'
@@ -227,14 +239,20 @@ class LinkedInProvider extends AbstractSocialMediaProvider
 
             Log::error('LinkedIn: Post publishing failed', [
                 'status' => $response->status(),
-                'response' => $response->body()
+                'response' => $response->body(),
+                'request_payload' => $postData
             ]);
 
             return [
                 'success' => false,
                 'error' => 'LinkedIn API error: ' . $response->body(),
                 'retryable' => $this->isRetryableError($response->status()),
-                'mode' => 'real'
+                'mode' => 'real',
+                'debug_info' => [
+                    'status_code' => $response->status(),
+                    'payload_sent' => $postData,
+                    'api_response' => $response->body()
+                ]
             ];
         } catch (\Exception $e) {
             Log::error('LinkedIn: Post publishing exception', [
