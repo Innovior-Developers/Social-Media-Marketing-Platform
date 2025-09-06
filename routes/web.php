@@ -1726,7 +1726,7 @@ Route::withoutMiddleware(['web'])->group(function () {
 
     Route::post('/test/linkedin/post/{sessionKey}', function ($sessionKey, \Illuminate\Http\Request $request) {
         try {
-            // 📊 Load tokens from your existing OAuth session (keep your current logic)
+            // 📊 Load tokens from your existing OAuth session
             $tokens = session($sessionKey);
 
             if (!$tokens) {
@@ -1750,31 +1750,80 @@ Route::withoutMiddleware(['web'])->group(function () {
                 ], 400);
             }
 
-            $content = $request->input('content', 'Test post from Social Media Marketing Platform! 🚀 #socialmedia #linkedin #testing');
+            // 🔥 ENHANCED DATA EXTRACTION - FLEXIBLE INPUT FORMATS
+            $requestData = $request->all();
 
-            // 🔥 STEP 1: CREATE SOCIALMEDIAPOST USING YOUR MODEL
-            $post = new \App\Models\SocialMediaPost([
-                'user_id' => 'system_test', // You can replace with real user ID later
-                'content' => [
-                    'text' => $content,
+            // Handle flexible content input formats
+            if (isset($requestData['content'])) {
+                if (is_string($requestData['content'])) {
+                    $contentText = $requestData['content'];
+                    $contentData = [
+                        'text' => $contentText,
+                        'title' => $requestData['title'] ?? 'LinkedIn Integration Post'
+                    ];
+                } else {
+                    $contentData = $requestData['content'];
+                    $contentText = $contentData['text'] ?? 'Test post from Social Media Marketing Platform! 🚀';
+                }
+            } else {
+                $contentText = 'Test post from Social Media Marketing Platform! 🚀 #socialmedia #linkedin #testing';
+                $contentData = [
+                    'text' => $contentText,
                     'title' => 'LinkedIn Integration Test'
-                ],
-                'platforms' => ['linkedin'],
+                ];
+            }
+
+            // Extract hashtags and format for LinkedIn
+            $hashtags = $requestData['hashtags'] ?? ['socialmedia', 'linkedin', 'testing'];
+
+            // 🔥 LINKEDIN-SPECIFIC: ADD HASHTAGS TO CONTENT TEXT
+            if (!empty($hashtags)) {
+                $hashtagString = '';
+                foreach ($hashtags as $tag) {
+                    $cleanTag = ltrim($tag, '#'); // Remove # if present
+                    $hashtagString .= ' #' . $cleanTag;
+                }
+
+                // Check if content already has hashtags
+                $hasHashtagsInContent = strpos($contentText, '#') !== false;
+
+                if (!$hasHashtagsInContent && !empty(trim($hashtagString))) {
+                    // Add hashtags to content with proper spacing
+                    $contentText = trim($contentText) . "\n\n" . trim($hashtagString);
+
+                    // Update content data
+                    $contentData['text'] = $contentText;
+                    $contentData['hashtags_added'] = true;
+                }
+            }
+
+            // Extract additional data from request
+            $hashtags = $requestData['hashtags'] ?? ['socialmedia', 'linkedin', 'testing'];
+            $mentions = $requestData['mentions'] ?? [];
+            $media = $requestData['media'] ?? [];
+            $settings = array_merge([
+                'auto_hashtags' => true,
+                'track_analytics' => true,
+                'cross_post' => false
+            ], $requestData['settings'] ?? []);
+
+            // 🔥 STEP 1: CREATE ENHANCED SOCIALMEDIAPOST USING YOUR MODEL
+            $post = new \App\Models\SocialMediaPost([
+                'user_id' => $requestData['user_id'] ?? 'system_test',
+                'content' => $contentData,
+                'platforms' => $requestData['platforms'] ?? ['linkedin'],
                 'post_status' => 'draft',
-                'media' => [],
-                'hashtags' => ['socialmedia', 'linkedin', 'testing'],
-                'settings' => [
-                    'auto_hashtags' => true,
-                    'track_analytics' => true,
-                    'cross_post' => false
-                ]
+                'media' => $media,
+                'hashtags' => $hashtags,
+                'mentions' => $mentions,
+                'settings' => $settings
             ]);
 
             // 🔥 STEP 2: CREATE CHANNEL USING YOUR MODEL (temporary for testing)
             $channel = new \App\Models\Channel([
                 'provider' => 'linkedin',
-                'handle' => 'test_linkedin_user',
-                'display_name' => 'LinkedIn Test Account',
+                'handle' => $requestData['handle'] ?? 'test_linkedin_user',
+                'display_name' => $requestData['display_name'] ?? 'LinkedIn Test Account',
                 'oauth_tokens' => [
                     'access_token' => $tokens['access_token'],
                     'expires_at' => $tokens['expires_at'] ?? now()->addDays(60)
@@ -1797,6 +1846,12 @@ Route::withoutMiddleware(['web'])->group(function () {
                         'character_count' => $validation['character_count'],
                         'character_limit' => $validation['character_limit'],
                         'mode' => $validation['mode']
+                    ],
+                    'post_data' => [
+                        'content' => $contentData,
+                        'hashtags' => $hashtags,
+                        'mentions' => $mentions,
+                        'character_count' => strlen($contentText)
                     ]
                 ], 400);
             }
@@ -1824,12 +1879,14 @@ Route::withoutMiddleware(['web'])->group(function () {
                 try {
                     \App\Jobs\CollectAnalytics::dispatch($post, 'linkedin');
                     $analyticsJobDispatched = true;
+                    $analyticsJobError = null;
                 } catch (\Exception $e) {
                     \Illuminate\Support\Facades\Log::warning('Failed to dispatch analytics job', [
                         'error' => $e->getMessage(),
                         'post_id' => $post->_id
                     ]);
                     $analyticsJobDispatched = false;
+                    $analyticsJobError = $e->getMessage();
                 }
 
                 // 🔥 STEP 7: CREATE ANALYTICS RECORD IMMEDIATELY
@@ -1845,19 +1902,32 @@ Route::withoutMiddleware(['web'])->group(function () {
                             'shares' => 0,
                             'comments' => 0,
                             'clicks' => 0,
-                            'engagement_rate' => 0
+                            'engagement_rate' => 0,
+                            'saves' => 0,
+                            'click_through_rate' => 0
                         ],
                         'collected_at' => now(),
-                        'performance_score' => 0
+                        'performance_score' => 0,
+                        'demographic_data' => [
+                            'age_groups' => [],
+                            'gender_split' => [],
+                            'top_locations' => []
+                        ],
+                        'engagement_timeline' => []
                     ]);
                     $analytics->save();
                     $analyticsCreated = true;
+                    $analyticsError = null;
                 } catch (\Exception $e) {
                     $analyticsCreated = false;
                     $analyticsError = $e->getMessage();
+                    \Illuminate\Support\Facades\Log::error('Failed to create analytics record', [
+                        'error' => $e->getMessage(),
+                        'post_id' => $post->_id
+                    ]);
                 }
 
-                // 🔥 STEP 8: SEND EMAIL NOTIFICATION (keep your existing logic)
+                // 🔥 STEP 8: SEND EMAIL NOTIFICATION
                 try {
                     $result = [
                         'success' => true,
@@ -1865,63 +1935,94 @@ Route::withoutMiddleware(['web'])->group(function () {
                         'url' => $publishResult['url'],
                         'published_at' => $publishResult['published_at'],
                         'mode' => $publishResult['mode'],
-                        'mongodb_id' => $post->_id
+                        'mongodb_id' => $post->_id,
+                        'analytics_created' => $analyticsCreated
                     ];
 
                     \Illuminate\Support\Facades\Mail::to(config('services.notifications.default_recipient'))
                         ->send(new \App\Mail\PostPublishedNotification($post, 'linkedin', $result));
 
                     $emailSent = true;
+                    $emailError = null;
                 } catch (\Exception $e) {
                     $emailSent = false;
                     $emailError = $e->getMessage();
+                    \Illuminate\Support\Facades\Log::warning('Failed to send email notification', [
+                        'error' => $e->getMessage(),
+                        'post_id' => $post->_id
+                    ]);
                 }
 
+                // 🔥 STEP 9: RETURN COMPREHENSIVE SUCCESS RESPONSE
                 return response()->json([
-                    'post_test' => 'COMPLETE SUCCESS! 🎉🚀',
-                    'message' => 'Post published using FULL ARCHITECTURE!',
+                    'post_test' => 'ENHANCED SUCCESS! 🎉🚀',
+                    'message' => 'Post published using COMPLETE ENHANCED ARCHITECTURE!',
+                    'timestamp' => now()->toISOString(),
                     'architecture_used' => [
-                        'models' => '✅ SocialMediaPost & PostAnalytics',
-                        'provider' => '✅ LinkedInProvider',
+                        'models' => '✅ Enhanced SocialMediaPost & PostAnalytics',
+                        'provider' => '✅ LinkedInProvider with validation',
                         'jobs' => '✅ CollectAnalytics dispatched',
-                        'database' => '✅ MongoDB saved',
-                        'validation' => '✅ Provider validation',
-                        'email' => '✅ Email notification'
+                        'database' => '✅ MongoDB saved with full structure',
+                        'validation' => '✅ Provider validation passed',
+                        'email' => '✅ Email notification sent'
                     ],
                     'post_data' => [
                         'mongodb_id' => $post->_id,
                         'platform_id' => $publishResult['platform_id'],
                         'linkedin_url' => $publishResult['url'],
-                        'content' => $content,
+                        'content' => $post->content,
+                        'hashtags' => $post->hashtags,
+                        'mentions' => $post->mentions,
+                        'media' => $post->media,
+                        'settings' => $post->settings,
                         'published_at' => $publishResult['published_at'],
                         'post_status' => $post->post_status,
-                        'platforms' => $post->platforms
+                        'platforms' => $post->platforms,
+                        'user_id' => $post->user_id
                     ],
                     'provider_info' => [
                         'mode' => $publishResult['mode'],
                         'provider_class' => 'LinkedInProvider',
                         'validation_passed' => true,
                         'character_count' => $validation['character_count'],
-                        'character_limit' => $validation['character_limit']
+                        'character_limit' => $validation['character_limit'],
+                        'supported_formats' => ['text', 'hashtags', 'mentions', 'media']
                     ],
                     'database_operations' => [
                         'post_saved' => true,
                         'analytics_created' => $analyticsCreated,
-                        'analytics_error' => $analyticsError ?? null
+                        'analytics_error' => $analyticsError,
+                        'analytics_id' => isset($analytics) ? $analytics->_id : null
                     ],
                     'job_dispatching' => [
                         'analytics_job_dispatched' => $analyticsJobDispatched,
+                        'analytics_job_error' => $analyticsJobError,
                         'queue_connection' => config('queue.default')
                     ],
                     'email_notification' => [
                         'sent' => $emailSent,
-                        'error' => $emailError ?? null
+                        'error' => $emailError,
+                        'recipient' => config('services.notifications.default_recipient')
                     ],
                     'api_response' => $publishResult,
+                    'linkedin_live_post' => [
+                        'url' => $publishResult['url'],
+                        'platform_id' => $publishResult['platform_id'],
+                        'published_at' => $publishResult['published_at'],
+                        'live_status' => 'PUBLISHED_ON_LINKEDIN'
+                    ],
                     'debug_info' => [
                         'token_source' => 'session/file',
                         'session_key' => $sessionKey,
-                        'provider_configuration' => $linkedinProvider->getConfigurationStatus()
+                        'request_format' => is_string($requestData['content'] ?? '') ? 'simple_string' : 'structured_object',
+                        'provider_configuration' => $linkedinProvider->getConfigurationStatus(),
+                        'input_data_structure' => [
+                            'content_type' => gettype($requestData['content'] ?? ''),
+                            'hashtags_count' => count($hashtags),
+                            'mentions_count' => count($mentions),
+                            'media_count' => count($media),
+                            'custom_settings' => !empty($requestData['settings'])
+                        ]
                     ]
                 ]);
             }
@@ -1933,12 +2034,21 @@ Route::withoutMiddleware(['web'])->group(function () {
                 'provider_error' => $publishResult['error'] ?? 'Unknown error',
                 'provider_mode' => $publishResult['mode'] ?? 'unknown',
                 'retryable' => $publishResult['retryable'] ?? false,
+                'timestamp' => now()->toISOString(),
                 'validation_info' => $validation,
+                'post_data' => [
+                    'content' => $contentData,
+                    'hashtags' => $hashtags,
+                    'mentions' => $mentions,
+                    'media' => $media,
+                    'settings' => $settings
+                ],
                 'architecture_status' => [
                     'models' => '✅ Created but not saved',
                     'provider' => '✅ Used but failed',
                     'validation' => '✅ Passed',
-                    'database' => '❌ Not saved due to failure'
+                    'database' => '❌ Not saved due to failure',
+                    'error_details' => $publishResult
                 ]
             ], 400);
         } catch (\Exception $e) {
@@ -1946,15 +2056,839 @@ Route::withoutMiddleware(['web'])->group(function () {
                 'post_test' => 'ARCHITECTURE_ERROR',
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'timestamp' => now()->toISOString(),
                 'architecture_status' => [
-                    'error_location' => 'Unknown',
+                    'error_location' => $e->getFile() . ':' . $e->getLine(),
                     'models_loaded' => class_exists('\App\Models\SocialMediaPost'),
                     'provider_loaded' => class_exists('\App\Services\SocialMedia\LinkedInProvider'),
-                    'jobs_available' => class_exists('\App\Jobs\CollectAnalytics')
+                    'jobs_available' => class_exists('\App\Jobs\CollectAnalytics'),
+                    'request_data' => $request->all()
                 ]
             ], 500);
         }
     });
+});
+
+Route::withoutMiddleware([
+    'web',
+    \App\Http\Middleware\VerifyCsrfToken::class,
+    \Illuminate\Session\Middleware\StartSession::class
+])->group(function () {
+
+    // 📊 GET ALL POSTS
+    Route::get('/test/posts/all/{userId?}', function ($userId = 'system_test') {
+        try {
+            $posts = \App\Models\SocialMediaPost::where('user_id', $userId)
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            $analytics = \App\Models\PostAnalytics::whereIn('social_media_post_id', $posts->pluck('_id'))
+                ->get()
+                ->groupBy('social_media_post_id');
+
+            $postsWithAnalytics = $posts->map(function ($post) use ($analytics) {
+                $postAnalytics = $analytics->get($post->_id, collect());
+
+                return [
+                    'id' => $post->_id,
+                    'content' => $post->content,
+                    'hashtags' => $post->hashtags,
+                    'mentions' => $post->mentions,
+                    'platforms' => $post->platforms,
+                    'post_status' => $post->post_status,
+                    'created_at' => $post->created_at,
+                    'published_at' => $post->published_at,
+                    'platform_posts' => $post->platform_posts,
+                    'engagement' => $post->engagement ?? [],
+                    'settings' => $post->settings,
+                    'analytics_count' => $postAnalytics->count(),
+                    'latest_analytics' => $postAnalytics->sortByDesc('collected_at')->first(),
+                    'total_engagement' => method_exists($post, 'getTotalEngagement') ? $post->getTotalEngagement() : 0
+                ];
+            });
+
+            return response()->json([
+                'posts_retrieval' => 'SUCCESS! 🎉',
+                'user_id' => $userId,
+                'total_posts' => $posts->count(),
+                'status_breakdown' => [
+                    'published' => $posts->where('post_status', 'published')->count(),
+                    'draft' => $posts->where('post_status', 'draft')->count(),
+                    'scheduled' => $posts->where('post_status', 'scheduled')->count(),
+                    'deleted' => $posts->where('post_status', 'deleted')->count(),
+                    'deleted_on_platform' => $posts->where('post_status', 'deleted_on_platform')->count(),
+                ],
+                'posts' => $postsWithAnalytics,
+                'timestamp' => now()->toISOString()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'posts_retrieval' => 'ERROR',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+
+    // ✏️ UPDATE POST - SINGLE UNIFIED VERSION
+    Route::put('/test/posts/update/{postId}', function ($postId, \Illuminate\Http\Request $request) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+
+            // 🔥 UNIFIED LINKEDIN DETECTION LOGIC
+            $hasLinkedInPost = isset($post->platform_posts['linkedin']['platform_id']);
+            $isPublishedStatus = in_array($post->post_status, ['published', 'deleted_on_platform']);
+            $isPublishedToLinkedIn = $hasLinkedInPost && $isPublishedStatus;
+
+            \Illuminate\Support\Facades\Log::info('Post update LinkedIn detection', [
+                'post_id' => $postId,
+                'has_linkedin_post' => $hasLinkedInPost,
+                'post_status' => $post->post_status,
+                'is_published_to_linkedin' => $isPublishedToLinkedIn
+            ]);
+
+            $linkedinAction = 'none';
+
+            // Handle LinkedIn limitations
+            if ($isPublishedToLinkedIn) {
+                $actionType = $request->get('linkedin_action', 'warn');
+
+                switch ($actionType) {
+                    case 'repost':
+                        $linkedinAction = 'create_new_post';
+                        break;
+                    case 'ignore':
+                        $linkedinAction = 'update_db_only';
+                        break;
+                    case 'warn':
+                    default:
+                        return response()->json([
+                            'update_status' => 'LINKEDIN_LIMITATION',
+                            'message' => 'LinkedIn does not allow editing published posts',
+                            'detection_info' => [
+                                'has_linkedin_post' => $hasLinkedInPost,
+                                'current_post_status' => $post->post_status,
+                                'linkedin_platform_id' => $post->platform_posts['linkedin']['platform_id'] ?? 'none',
+                                'linkedin_url' => $post->platform_posts['linkedin']['url'] ?? 'none'
+                            ],
+                            'options' => [
+                                'repost' => 'Create new LinkedIn post with updated content',
+                                'ignore' => 'Update database only (LinkedIn post unchanged)',
+                                'warn' => 'Show this warning (current behavior)'
+                            ],
+                            'usage_examples' => [
+                                'repost_url' => "PUT " . $request->url() . "?linkedin_action=repost",
+                                'ignore_url' => "PUT " . $request->url() . "?linkedin_action=ignore"
+                            ],
+                            'current_linkedin_post' => $post->platform_posts['linkedin'] ?? null,
+                            'requested_update' => $request->all()
+                        ], 409);
+                }
+            }
+
+            // Process update data
+            $updateData = $request->only([
+                'content',
+                'hashtags',
+                'mentions',
+                'media',
+                'settings',
+                'platforms'
+            ]);
+
+            // Handle content formatting with hashtags
+            if (isset($updateData['content']) && isset($updateData['hashtags'])) {
+                $content = is_array($updateData['content']) ? $updateData['content'] : ['text' => $updateData['content']];
+                $hashtags = $updateData['hashtags'];
+
+                // Add hashtags to content for LinkedIn
+                if (!empty($hashtags) && in_array('linkedin', $post->platforms)) {
+                    $hashtagString = '';
+                    foreach ($hashtags as $tag) {
+                        $cleanTag = ltrim($tag, '#');
+                        $hashtagString .= ' #' . $cleanTag;
+                    }
+
+                    if (!empty(trim($hashtagString))) {
+                        $content['text'] = trim($content['text']) . "\n\n" . trim($hashtagString);
+                    }
+                }
+
+                $updateData['content'] = $content;
+            }
+
+            // Add update metadata
+            $updateData['last_updated_at'] = now();
+            $updateData['update_count'] = ($post->update_count ?? 0) + 1;
+
+            // Update post in database
+            $post->update(array_filter($updateData));
+
+            $response = [
+                'update_status' => 'SUCCESS! ✏️',
+                'message' => 'Post updated successfully in database',
+                'post_id' => $postId,
+                'updated_fields' => array_keys(array_filter($updateData)),
+                'linkedin_status' => $linkedinAction,
+                'detection_results' => [
+                    'has_linkedin_post' => $hasLinkedInPost,
+                    'is_published_to_linkedin' => $isPublishedToLinkedIn,
+                    'post_status' => $post->post_status,
+                    'action_requested' => $request->get('linkedin_action', 'none')
+                ],
+                'post_data' => $post->fresh(),
+                'timestamp' => now()->toISOString()
+            ];
+
+            // 🔥 HANDLE LINKEDIN REPOST IF REQUESTED
+            if ($linkedinAction === 'create_new_post') {
+                try {
+                    \Illuminate\Support\Facades\Log::info('Starting LinkedIn repost process', [
+                        'post_id' => $postId,
+                        'original_platform_id' => $post->platform_posts['linkedin']['platform_id'] ?? 'none'
+                    ]);
+
+                    // Get LinkedIn token
+                    $sessionFiles = glob(storage_path('app/oauth_sessions/oauth_tokens_linkedin_*.json'));
+
+                    if (empty($sessionFiles)) {
+                        throw new \Exception('No LinkedIn token files found');
+                    }
+
+                    $latestFile = array_reduce($sessionFiles, function ($latest, $file) {
+                        return (!$latest || filemtime($file) > filemtime($latest)) ? $file : $latest;
+                    });
+
+                    $tokenData = json_decode(file_get_contents($latestFile), true);
+
+                    if (!isset($tokenData['access_token'])) {
+                        throw new \Exception('LinkedIn token not found in session file');
+                    }
+
+                    // Create temporary channel for API call
+                    $channel = new \App\Models\Channel([
+                        'oauth_tokens' => $tokenData,
+                        'provider' => 'linkedin',
+                        'connection_status' => 'connected'
+                    ]);
+
+                    // Use LinkedIn provider to create new post
+                    $provider = new \App\Services\SocialMedia\LinkedInProvider();
+                    $publishResult = $provider->publishPost($post->fresh(), $channel);
+
+                    \Illuminate\Support\Facades\Log::info('LinkedIn repost result', [
+                        'success' => $publishResult['success'],
+                        'result' => $publishResult
+                    ]);
+
+                    if ($publishResult['success']) {
+                        // Update platform_posts with new LinkedIn post data
+                        $platformPosts = $post->platform_posts ?? [];
+
+                        // Keep original LinkedIn post data for reference
+                        $originalLinkedIn = $platformPosts['linkedin'] ?? null;
+
+                        // Update main LinkedIn post data
+                        $platformPosts['linkedin'] = [
+                            'platform_id' => $publishResult['platform_id'],
+                            'url' => $publishResult['url'],
+                            'published_at' => $publishResult['published_at'],
+                            'mode' => 'updated_repost',
+                            'update_of_original' => true
+                        ];
+
+                        // Store original post data for reference
+                        if ($originalLinkedIn) {
+                            $platformPosts['linkedin_original'] = $originalLinkedIn;
+                        }
+
+                        $post->update([
+                            'platform_posts' => $platformPosts,
+                            'post_status' => 'published' // Update status back to published
+                        ]);
+
+                        $response['linkedin_repost'] = [
+                            'success' => true,
+                            'message' => 'New LinkedIn post created successfully!',
+                            'new_post_url' => $publishResult['url'],
+                            'new_platform_id' => $publishResult['platform_id'],
+                            'original_post_url' => $originalLinkedIn['url'] ?? 'unknown',
+                            'both_posts_exist' => true,
+                            'published_at' => $publishResult['published_at']
+                        ];
+
+                        $response['message'] = 'Post updated in database AND new LinkedIn post created!';
+                    } else {
+                        $response['linkedin_repost'] = [
+                            'success' => false,
+                            'error' => $publishResult['error'] ?? 'Unknown publishing error',
+                            'provider_result' => $publishResult
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::error('LinkedIn repost failed', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+
+                    $response['linkedin_repost'] = [
+                        'success' => false,
+                        'error' => 'Repost failed: ' . $e->getMessage()
+                    ];
+                }
+            }
+
+            return response()->json($response);
+        } catch (\Exception $e) {
+            return response()->json([
+                'update_status' => 'ERROR',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+
+    // 🗑️ DELETE POST FROM PLATFORM
+    Route::delete('/test/posts/delete-from-linkedin/{postId}', function ($postId) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+
+            if (!isset($post->platform_posts['linkedin']['platform_id'])) {
+                return response()->json([
+                    'linkedin_delete' => 'NOT_APPLICABLE',
+                    'message' => 'Post was not published to LinkedIn',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            // 🔥 USE PROVIDER METHODS INSTEAD OF DIRECT API CALLS
+            $sessionFiles = glob(storage_path('app/oauth_sessions/oauth_tokens_linkedin_*.json'));
+
+            if (empty($sessionFiles)) {
+                return response()->json([
+                    'linkedin_delete' => 'NO_TOKEN',
+                    'message' => 'No LinkedIn token available for deletion',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            $latestFile = array_reduce($sessionFiles, function ($latest, $file) {
+                return (!$latest || filemtime($file) > filemtime($latest)) ? $file : $latest;
+            });
+
+            $tokenData = json_decode(file_get_contents($latestFile), true);
+
+            if (!isset($tokenData['access_token'])) {
+                return response()->json([
+                    'linkedin_delete' => 'INVALID_TOKEN',
+                    'message' => 'LinkedIn token is invalid',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            // Create channel and use provider
+            $channel = new \App\Models\Channel([
+                'oauth_tokens' => $tokenData,
+                'provider' => 'linkedin'
+            ]);
+
+            $provider = new \App\Services\SocialMedia\LinkedInProvider();
+
+            // 🔥 CHECK POST STATUS FIRST
+            $statusCheck = $provider->getPostDeletionStatus(
+                $post->platform_posts['linkedin']['platform_id'],
+                $channel,
+                $post->platform_posts['linkedin']['url'] ?? null
+            );
+
+            // 🔥 UPDATE DATABASE BASED ON LINKEDIN STATUS
+            if ($statusCheck['status'] === 'DELETED') {
+                // Post already deleted on LinkedIn - update database
+                $post->update([
+                    'post_status' => 'deleted_on_platform',
+                    'deleted_from_linkedin_at' => now(),
+                    'linkedin_status_verified' => true,
+                    'linkedin_deletion_response' => [
+                        'status' => 'verified_deleted',
+                        'verified_at' => now()->toISOString(),
+                        'method' => 'provider_check'
+                    ]
+                ]);
+
+                return response()->json([
+                    'linkedin_delete' => 'SUCCESS! 🗑️',
+                    'message' => 'Post was already deleted from LinkedIn - database updated',
+                    'post_id' => $postId,
+                    'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                    'status_check' => $statusCheck,
+                    'database_updated' => true,
+                    'new_post_status' => 'deleted_on_platform',
+                    'timestamp' => now()->toISOString()
+                ]);
+            }
+
+            // Post still exists - provide manual deletion guidance
+            return response()->json([
+                'linkedin_delete' => 'MANUAL_DELETION_REQUIRED',
+                'message' => 'Post still exists on LinkedIn - please delete manually',
+                'post_id' => $postId,
+                'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                'post_url' => $post->platform_posts['linkedin']['url'] ?? null,
+                'manual_deletion_steps' => $statusCheck['manual_deletion_steps'] ?? [],
+                'status_check' => $statusCheck,
+                'note' => 'After manual deletion, call this endpoint again to update database',
+                'timestamp' => now()->toISOString()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'linkedin_delete' => 'ERROR',
+                'error' => $e->getMessage(),
+                'post_id' => $postId,
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+
+    // 🔥 ENHANCED DELETE FROM LINKEDIN WITH MULTI-METHOD VERIFICATION
+    Route::delete('/test/posts/delete-from-linkedin-enhanced/{postId}', function ($postId) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+
+            if (!isset($post->platform_posts['linkedin']['platform_id'])) {
+                return response()->json([
+                    'linkedin_delete' => 'NOT_APPLICABLE',
+                    'message' => 'Post was not published to LinkedIn',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            // Get LinkedIn token
+            $sessionFiles = glob(storage_path('app/oauth_sessions/oauth_tokens_linkedin_*.json'));
+
+            if (empty($sessionFiles)) {
+                return response()->json([
+                    'linkedin_delete' => 'NO_TOKEN',
+                    'message' => 'No LinkedIn token available',
+                    'post_id' => $postId,
+                    'manual_verification_required' => true
+                ], 400);
+            }
+
+            $latestFile = array_reduce($sessionFiles, function ($latest, $file) {
+                return (!$latest || filemtime($file) > filemtime($latest)) ? $file : $latest;
+            });
+
+            $tokenData = json_decode(file_get_contents($latestFile), true);
+
+            if (!isset($tokenData['access_token'])) {
+                return response()->json([
+                    'linkedin_delete' => 'INVALID_TOKEN',
+                    'message' => 'LinkedIn token is invalid',
+                    'post_id' => $postId,
+                    'manual_verification_required' => true
+                ], 400);
+            }
+
+            // Create channel and use enhanced provider methods
+            $channel = new \App\Models\Channel([
+                'oauth_tokens' => $tokenData,
+                'provider' => 'linkedin'
+            ]);
+
+            $provider = new \App\Services\SocialMedia\LinkedInProvider();
+
+            // 🔥 USE ENHANCED STATUS CHECK
+            $statusCheck = $provider->getPostDeletionStatusEnhanced(
+                $post->platform_posts['linkedin']['platform_id'],
+                $channel,
+                $post->platform_posts['linkedin']['url'] ?? null
+            );
+
+            // 🔥 HANDLE DIFFERENT STATUS RESULTS
+            switch ($statusCheck['status']) {
+                case 'DELETED':
+                    if ($statusCheck['confidence'] === 'high') {
+                        $post->update([
+                            'post_status' => 'deleted_on_platform',
+                            'deleted_from_linkedin_at' => now(),
+                            'linkedin_status_verified' => true,
+                            'linkedin_deletion_response' => [
+                                'status' => 'verified_deleted',
+                                'confidence' => $statusCheck['confidence'],
+                                'verified_at' => now()->toISOString(),
+                                'method' => 'enhanced_provider_check',
+                                'verification_methods' => $statusCheck['verification_methods'] ?? []
+                            ]
+                        ]);
+
+                        return response()->json([
+                            'linkedin_delete' => 'SUCCESS! 🗑️',
+                            'message' => 'Post deleted from LinkedIn (high confidence) - database updated',
+                            'post_id' => $postId,
+                            'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                            'status_check' => $statusCheck,
+                            'database_updated' => true,
+                            'confidence' => $statusCheck['confidence'],
+                            'timestamp' => now()->toISOString()
+                        ]);
+                    } else {
+                        // Medium/low confidence deletion
+                        return response()->json([
+                            'linkedin_delete' => 'UNCERTAIN_DELETION',
+                            'message' => 'Post may be deleted but confidence is low - manual verification recommended',
+                            'post_id' => $postId,
+                            'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                            'status_check' => $statusCheck,
+                            'confidence' => $statusCheck['confidence'],
+                            'requires_manual_verification' => true,
+                            'timestamp' => now()->toISOString()
+                        ], 409);
+                    }
+                    break;
+
+                case 'EXISTS':
+                    return response()->json([
+                        'linkedin_delete' => 'POST_STILL_EXISTS',
+                        'message' => 'Post still exists on LinkedIn - manual deletion required',
+                        'post_id' => $postId,
+                        'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                        'post_url' => $post->platform_posts['linkedin']['url'] ?? null,
+                        'confidence' => $statusCheck['confidence'],
+                        'manual_deletion_steps' => $statusCheck['manual_deletion_steps'] ?? [],
+                        'status_check' => $statusCheck,
+                        'note' => 'Please delete manually and call this endpoint again',
+                        'timestamp' => now()->toISOString()
+                    ]);
+
+                case 'UNCERTAIN':
+                default:
+                    return response()->json([
+                        'linkedin_delete' => 'MANUAL_VERIFICATION_REQUIRED',
+                        'message' => 'LinkedIn API results are inconsistent - manual verification needed',
+                        'post_id' => $postId,
+                        'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                        'post_url' => $post->platform_posts['linkedin']['url'] ?? null,
+                        'status_check' => $statusCheck,
+                        'api_limitation_detected' => true,
+                        'manual_verification_steps' => $statusCheck['manual_verification_steps'] ?? [],
+                        'recommendation' => 'Visit the LinkedIn post URL directly to verify its status',
+                        'timestamp' => now()->toISOString()
+                    ], 409);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'linkedin_delete' => 'ERROR',
+                'error' => $e->getMessage(),
+                'post_id' => $postId,
+                'manual_verification_required' => true,
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+
+    // 🔥 ENHANCED LINKEDIN STATUS CHECK ROUTE
+    Route::get('/test/posts/linkedin-status-enhanced/{postId}', function ($postId) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+
+            if (!isset($post->platform_posts['linkedin']['platform_id'])) {
+                return response()->json([
+                    'status_check' => 'NOT_APPLICABLE',
+                    'message' => 'Post was not published to LinkedIn',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            // Get LinkedIn token
+            $sessionFiles = glob(storage_path('app/oauth_sessions/oauth_tokens_linkedin_*.json'));
+
+            if (empty($sessionFiles)) {
+                return response()->json([
+                    'status_check' => 'NO_TOKEN',
+                    'message' => 'No LinkedIn token available for status check',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            $latestFile = array_reduce($sessionFiles, function ($latest, $file) {
+                return (!$latest || filemtime($file) > filemtime($latest)) ? $file : $latest;
+            });
+
+            $tokenData = json_decode(file_get_contents($latestFile), true);
+
+            if (!isset($tokenData['access_token'])) {
+                return response()->json([
+                    'status_check' => 'INVALID_TOKEN',
+                    'message' => 'LinkedIn token is invalid',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            // Create channel and use enhanced provider methods
+            $channel = new \App\Models\Channel([
+                'oauth_tokens' => $tokenData,
+                'provider' => 'linkedin'
+            ]);
+
+            $provider = new \App\Services\SocialMedia\LinkedInProvider();
+
+            // 🔥 USE ENHANCED MULTI-METHOD STATUS CHECK
+            $enhancedCheck = $provider->checkPostExistsEnhanced(
+                $post->platform_posts['linkedin']['platform_id'],
+                $channel
+            );
+
+            $statusResult = $provider->getPostDeletionStatusEnhanced(
+                $post->platform_posts['linkedin']['platform_id'],
+                $channel,
+                $post->platform_posts['linkedin']['url'] ?? null
+            );
+
+            return response()->json([
+                'status_check' => 'SUCCESS! 🔍',
+                'post_id' => $postId,
+                'platform_id' => $post->platform_posts['linkedin']['platform_id'],
+                'enhanced_existence_check' => $enhancedCheck,
+                'deletion_status' => $statusResult,
+                'current_post_status' => $post->post_status,
+                'api_analysis' => [
+                    'methods_used' => $enhancedCheck['methods_used'] ?? 0,
+                    'methods_saying_exists' => $enhancedCheck['methods_saying_exists'] ?? 0,
+                    'confidence_level' => $enhancedCheck['confidence'] ?? 'unknown',
+                    'exists_percentage' => $enhancedCheck['exists_percentage'] ?? 0
+                ],
+                'verification_methods' => $enhancedCheck['verification_methods'] ?? [],
+                'recommendation' => $enhancedCheck['recommendation'] ?? 'No recommendation available',
+                'timestamp' => now()->toISOString()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status_check' => 'ERROR',
+                'error' => $e->getMessage(),
+                'post_id' => $postId,
+                'trace' => $e->getTraceAsString()
+            ], 500);
+        }
+    });
+
+    // 🔥 MANUAL STATUS CONFIRMATION ROUTE
+    Route::post('/test/posts/confirm-linkedin-status/{postId}', function ($postId, \Illuminate\Http\Request $request) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+
+            $manualStatus = $request->get('status'); // 'deleted' or 'exists'
+            $userConfirmation = $request->get('confirmed_by_user', false);
+
+            if (!in_array($manualStatus, ['deleted', 'exists']) || !$userConfirmation) {
+                return response()->json([
+                    'confirmation' => 'INVALID_INPUT',
+                    'message' => 'Please provide valid status (deleted/exists) and confirmation',
+                    'required_fields' => [
+                        'status' => 'deleted or exists',
+                        'confirmed_by_user' => true
+                    ]
+                ], 400);
+            }
+
+            if ($manualStatus === 'deleted') {
+                $post->update([
+                    'post_status' => 'deleted_on_platform',
+                    'deleted_from_linkedin_at' => now(),
+                    'linkedin_status_verified' => true,
+                    'manual_verification' => true,
+                    'linkedin_deletion_response' => [
+                        'status' => 'manually_verified_deleted',
+                        'verified_at' => now()->toISOString(),
+                        'verified_by' => 'user_confirmation',
+                        'method' => 'manual_verification'
+                    ]
+                ]);
+
+                return response()->json([
+                    'confirmation' => 'SUCCESS! ✅',
+                    'message' => 'Post status updated to deleted based on manual verification',
+                    'post_id' => $postId,
+                    'new_status' => 'deleted_on_platform',
+                    'verified_manually' => true,
+                    'database_updated' => true,
+                    'timestamp' => now()->toISOString()
+                ]);
+            } else {
+                return response()->json([
+                    'confirmation' => 'POST_EXISTS_CONFIRMED',
+                    'message' => 'Post confirmed to still exist on LinkedIn',
+                    'post_id' => $postId,
+                    'current_status' => $post->post_status,
+                    'recommendation' => 'Delete the post manually from LinkedIn first, then call the confirmation endpoint with status=deleted',
+                    'timestamp' => now()->toISOString()
+                ]);
+            }
+        } catch (\Exception $e) {
+            return response()->json([
+                'confirmation' => 'ERROR',
+                'error' => $e->getMessage(),
+                'post_id' => $postId
+            ], 500);
+        }
+    });
+
+    // 🔄 CHECK LINKEDIN POST STATUS
+    Route::get('/test/posts/check-linkedin-status/{postId}', function ($postId) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+
+            if (!isset($post->platform_posts['linkedin'])) {
+                return response()->json([
+                    'status_check' => 'NOT_APPLICABLE',
+                    'message' => 'Post was not published to LinkedIn',
+                    'post_id' => $postId,
+                    'post_status' => $post->post_status
+                ], 400);
+            }
+
+            $linkedinData = $post->platform_posts['linkedin'];
+            $platformId = $linkedinData['platform_id'];
+
+            // Try to get LinkedIn token
+            $sessionFiles = glob(storage_path('app/oauth_sessions/oauth_tokens_linkedin_*.json'));
+
+            if (empty($sessionFiles)) {
+                return response()->json([
+                    'status_check' => 'NO_TOKEN',
+                    'message' => 'No LinkedIn token available for status check',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            $latestFile = array_reduce($sessionFiles, function ($latest, $file) {
+                return (!$latest || filemtime($file) > filemtime($latest)) ? $file : $latest;
+            });
+
+            $tokenData = json_decode(file_get_contents($latestFile), true);
+
+            if (!isset($tokenData['access_token'])) {
+                return response()->json([
+                    'status_check' => 'INVALID_TOKEN',
+                    'message' => 'LinkedIn token is invalid',
+                    'post_id' => $postId
+                ], 400);
+            }
+
+            // Check if post exists on LinkedIn
+            $response = \Illuminate\Support\Facades\Http::withToken($tokenData['access_token'])
+                ->withHeaders([
+                    'X-Restli-Protocol-Version' => '2.0.0',
+                    'Accept' => 'application/json'
+                ])
+                ->get("https://api.linkedin.com/v2/shares/{$platformId}");
+
+            $existsOnLinkedIn = $response->successful();
+            $linkedinStatus = $existsOnLinkedIn ? 'ACTIVE' : 'DELETED_OR_UNAVAILABLE';
+
+            // Update post status if needed
+            $postStatusUpdated = false;
+            if (!$existsOnLinkedIn && $post->post_status === 'published') {
+                $post->update([
+                    'post_status' => 'deleted_on_platform',
+                    'platform_status_checked_at' => now()
+                ]);
+                $postStatusUpdated = true;
+            }
+
+            return response()->json([
+                'status_check' => 'SUCCESS! 🔄',
+                'post_id' => $postId,
+                'platform_id' => $platformId,
+                'exists_on_linkedin' => $existsOnLinkedIn,
+                'linkedin_status' => $linkedinStatus,
+                'platform_response' => [
+                    'status_code' => $response->status(),
+                    'successful' => $response->successful()
+                ],
+                'post_status_updated' => $postStatusUpdated,
+                'current_post_status' => $post->fresh()->post_status,
+                'timestamp' => now()->toISOString()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status_check' => 'ERROR',
+                'error' => $e->getMessage(),
+                'post_id' => $postId
+            ], 500);
+        }
+    });
+
+    // 📊 GET POST DETAILS WITH ANALYTICS
+    Route::get('/test/posts/details/{postId}', function ($postId) {
+        try {
+            $post = \App\Models\SocialMediaPost::findOrFail($postId);
+            $analytics = \App\Models\PostAnalytics::where('social_media_post_id', $postId)
+                ->orderBy('collected_at', 'desc')
+                ->get();
+
+            return response()->json([
+                'post_details' => 'SUCCESS! 📊',
+                'post' => $post,
+                'analytics' => [
+                    'total_records' => $analytics->count(),
+                    'latest_collection' => $analytics->first()?->collected_at,
+                    'platforms' => $analytics->pluck('platform')->unique()->values(),
+                    'performance_scores' => $analytics->pluck('performance_score')->toArray(),
+                    'records' => $analytics->take(10) // Limit for performance
+                ],
+                'engagement_summary' => [
+                    'total_engagement' => method_exists($post, 'getTotalEngagement') ? $post->getTotalEngagement() : 0,
+                    'platform_breakdown' => $analytics->groupBy('platform')->map(function ($platformAnalytics) {
+                        return [
+                            'count' => $platformAnalytics->count(),
+                            'latest_metrics' => $platformAnalytics->first()?->metrics,
+                            'avg_performance' => round($platformAnalytics->avg('performance_score'), 2)
+                        ];
+                    })
+                ],
+                'timestamp' => now()->toISOString()
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'post_details' => 'ERROR',
+                'error' => $e->getMessage(),
+                'post_id' => $postId
+            ], 500);
+        }
+    });
+});
+
+Route::get('/test/linkedin/analytics/{postId}', function ($postId) {
+    try {
+        $post = \App\Models\SocialMediaPost::find($postId);
+
+        if (!$post) {
+            return response()->json(['error' => 'Post not found'], 404);
+        }
+
+        // Manually trigger analytics collection
+        \App\Jobs\CollectAnalytics::dispatch($post, 'linkedin');
+
+        // Get current analytics
+        $analytics = \App\Models\PostAnalytics::where('social_media_post_id', $postId)
+            ->where('platform', 'linkedin')
+            ->orderBy('collected_at', 'desc')
+            ->first();
+
+        return response()->json([
+            'analytics_test' => 'SUCCESS',
+            'post_id' => $postId,
+            'analytics_data' => $analytics,
+            'linkedin_post' => $post->platform_posts['linkedin'] ?? null,
+            'job_dispatched' => true,
+            'timestamp' => now()->toISOString()
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'analytics_test' => 'ERROR',
+            'error' => $e->getMessage()
+        ], 500);
+    }
 });
 
 // List active OAuth sessions
@@ -2031,6 +2965,79 @@ Route::get('/step-1-1-complete', function () {
         'ready_for_phase_2' => true
     ];
 });
+
+function checkLinkedInPostStatusWithProvider(\App\Models\SocialMediaPost $post): array
+{
+    try {
+        $linkedinData = $post->platform_posts['linkedin'] ?? null;
+
+        if (!$linkedinData || !isset($linkedinData['platform_id'])) {
+            return [
+                'success' => false,
+                'error' => 'No LinkedIn post data found',
+                'exists' => false
+            ];
+        }
+
+        // Get LinkedIn token
+        $sessionFiles = glob(storage_path('app/oauth_sessions/oauth_tokens_linkedin_*.json'));
+
+        if (empty($sessionFiles)) {
+            return [
+                'success' => false,
+                'error' => 'No LinkedIn token available',
+                'exists' => 'unknown',
+                'requires_manual_deletion' => true
+            ];
+        }
+
+        $latestFile = array_reduce($sessionFiles, function ($latest, $file) {
+            return (!$latest || filemtime($file) > filemtime($latest)) ? $file : $latest;
+        });
+
+        $tokenData = json_decode(file_get_contents($latestFile), true);
+
+        if (!isset($tokenData['access_token'])) {
+            return [
+                'success' => false,
+                'error' => 'Invalid LinkedIn token',
+                'exists' => 'unknown',
+                'requires_manual_deletion' => true
+            ];
+        }
+
+        // Create temporary channel
+        $channel = new \App\Models\Channel([
+            'oauth_tokens' => $tokenData,
+            'provider' => 'linkedin'
+        ]);
+
+        // Use LinkedIn provider to check post status
+        $provider = new \App\Services\SocialMedia\LinkedInProvider();
+        $result = $provider->getPostDeletionStatus(
+            $linkedinData['platform_id'],
+            $channel,
+            $linkedinData['url'] ?? null
+        );
+
+        return [
+            'success' => true,
+            'exists' => $result['status'] === 'EXISTS',
+            'status' => $result['status'],
+            'message' => $result['message'],
+            'deletion_steps' => $result['manual_deletion_steps'] ?? null,
+            'post_url' => $result['post_url'] ?? null,
+            'checked_at' => $result['checked_at'] ?? now()->toISOString()
+        ];
+    } catch (\Exception $e) {
+        return [
+            'success' => false,
+            'error' => $e->getMessage(),
+            'exists' => 'unknown',
+            'requires_manual_deletion' => true
+        ];
+    }
+}
 
 // Keep auth routes that Breeze created
 require __DIR__ . '/auth.php';
