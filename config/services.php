@@ -45,7 +45,12 @@ return [
         'base_url' => 'https://api.linkedin.com',
         'auth_url' => 'https://www.linkedin.com/oauth/v2/authorization',
         'token_url' => 'https://www.linkedin.com/oauth/v2/accessToken',
-        'scopes' => ['w_member_social', 'r_liteprofile'], // Removed r_emailaddress
+        'scopes' => [
+            'openid',          // Required for OpenID Connect
+            'profile',         // Access to profile data
+            'email',           // Access to email (if needed)
+            'w_member_social'  // Required for posting
+        ],
     ],
 
     'twitter' => [

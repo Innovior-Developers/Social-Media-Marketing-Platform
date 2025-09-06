@@ -70,7 +70,6 @@ class ChannelController extends Controller
                     'total' => $channels->total(),
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -119,7 +118,6 @@ class ChannelController extends Controller
                 'message' => 'Channel created successfully',
                 'data' => $channel->load(['brand'])
             ], 201);
-
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -162,7 +160,6 @@ class ChannelController extends Controller
                     ]
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -194,7 +191,6 @@ class ChannelController extends Controller
                 'message' => 'Channel updated successfully',
                 'data' => $channel->fresh(['brand'])
             ]);
-
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -217,10 +213,10 @@ class ChannelController extends Controller
     {
         try {
             $channel = Channel::findOrFail($id);
-            
+
             // Mark as disconnected first
             $channel->markAsDisconnected();
-            
+
             // Then delete
             $channel->delete();
 
@@ -228,7 +224,6 @@ class ChannelController extends Controller
                 'status' => 'success',
                 'message' => 'Channel deleted successfully'
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -260,7 +255,6 @@ class ChannelController extends Controller
                 'message' => 'Channel connected successfully',
                 'data' => $channel->fresh(['brand'])
             ]);
-
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -283,7 +277,7 @@ class ChannelController extends Controller
     {
         try {
             $channel = Channel::findOrFail($id);
-            
+
             $channel->markAsDisconnected();
 
             return response()->json([
@@ -291,7 +285,6 @@ class ChannelController extends Controller
                 'message' => 'Channel disconnected successfully',
                 'data' => $channel->fresh(['brand'])
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -334,11 +327,60 @@ class ChannelController extends Controller
                     ]
                 ]
             ]);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to sync channel',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Connect LinkedIn channel using your provider
+     */
+    public function connectLinkedIn(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'brand_id' => 'required|exists:brands,_id',
+                'oauth_code' => 'required|string'
+            ]);
+
+            // 🔥 USE YOUR LINKEDIN PROVIDER
+            $provider = new \App\Services\SocialMedia\LinkedInProvider();
+
+            if (!$provider->isConfigured()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'LinkedIn provider not properly configured'
+                ], 400);
+            }
+
+            // Exchange code for tokens
+            $tokens = $provider->exchangeCodeForTokens($validated['oauth_code']);
+
+            // Create channel record
+            $channel = Channel::create([
+                'brand_id' => $validated['brand_id'],
+                'provider' => 'linkedin',
+                'handle' => 'linkedin_user', // Update with real profile data
+                'display_name' => 'LinkedIn Professional',
+                'oauth_tokens' => $tokens,
+                'connection_status' => 'connected',
+                'last_sync_at' => now(),
+                'active' => true
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'LinkedIn channel connected successfully',
+                'data' => $channel->load(['brand'])
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to connect LinkedIn channel',
                 'error' => $e->getMessage()
             ], 500);
         }
