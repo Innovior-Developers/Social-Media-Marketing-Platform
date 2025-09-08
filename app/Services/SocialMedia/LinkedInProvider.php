@@ -186,12 +186,12 @@ class LinkedInProvider extends AbstractSocialMediaProvider
             $profileId = $profile['sub'];
             $formatted = $this->formatPost($post);
 
-            // 🔥 CHECK FOR MEDIA AND HANDLE ACCORDINGLY
+            // CHECK FOR MEDIA AND HANDLE ACCORDINGLY
             $hasMedia = !empty($post->media);
             $mediaUrns = [];
             $mediaUploadResults = [];
 
-            // 🔥 ENHANCED MEDIA PROCESSING FOR CAROUSEL POSTS
+            // ENHANCED MEDIA PROCESSING FOR CAROUSEL POSTS
             if ($hasMedia) {
                 Log::info('LinkedIn: Processing multiple images for carousel', [
                     'media_count' => count($post->media),
@@ -249,7 +249,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 }
             }
 
-            // 🔥 BUILD POST DATA WITH OR WITHOUT MEDIA
+            // BUILD POST DATA WITH OR WITHOUT MEDIA
             $shareContent = [
                 'shareCommentary' => [
                     'text' => $formatted['content']
@@ -292,7 +292,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 'payload' => $postData
             ]);
 
-            // 🔥 PUBLISH POST (WITH OR WITHOUT MEDIA)
+            // PUBLISH POST (WITH OR WITHOUT MEDIA)
             $response = Http::withToken($tokens['access_token'])
                 ->withHeaders([
                     'X-Restli-Protocol-Version' => '2.0.0',
@@ -813,7 +813,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
             $profileId = $profile['sub'];
             $formatted = $this->formatPost($post);
 
-            // 🔥 HANDLE MEDIA UPLOADS
+            // HANDLE MEDIA UPLOADS
             $mediaUrns = [];
             $uploadedMedia = [];
 
@@ -846,7 +846,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 }
             }
 
-            // 🔥 BUILD POST DATA WITH MEDIA
+            // BUILD POST DATA WITH MEDIA
             $shareContent = [
                 'shareCommentary' => [
                     'text' => $formatted['content']
@@ -882,7 +882,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 'payload' => $postData
             ]);
 
-            // 🔥 PUBLISH POST WITH MEDIA
+            // PUBLISH POST WITH MEDIA
             $response = Http::withToken($tokens['access_token'])
                 ->withHeaders([
                     'X-Restli-Protocol-Version' => '2.0.0',
@@ -1511,7 +1511,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
             $results = [];
             $methods = [];
 
-            // 🔥 METHOD 1: Direct shares endpoint
+            // METHOD 1: Direct shares endpoint
             try {
                 $sharesResponse = Http::withToken($tokens['access_token'])
                     ->withHeaders([
@@ -1542,7 +1542,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 ];
             }
 
-            // 🔥 METHOD 2: Try UGC posts endpoint (newer API)
+            // METHOD 2: Try UGC posts endpoint (newer API)
             try {
                 $ugcResponse = Http::withToken($tokens['access_token'])
                     ->withHeaders([
@@ -1572,7 +1572,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 ];
             }
 
-            // 🔥 METHOD 3: Check user's recent posts to see if this post appears
+            // METHOD 3: Check user's recent posts to see if this post appears
             try {
                 $profileResponse = Http::withToken($tokens['access_token'])
                     ->withHeaders([
@@ -1625,7 +1625,7 @@ class LinkedInProvider extends AbstractSocialMediaProvider
                 ];
             }
 
-            // 🔥 ANALYZE RESULTS FROM ALL METHODS
+            // ANALYZE RESULTS FROM ALL METHODS
             $existsCount = 0;
             $totalMethods = 0;
             $confidence = 'low';
