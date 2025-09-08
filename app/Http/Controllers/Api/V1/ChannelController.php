@@ -1,5 +1,4 @@
 <?php
-// app/Http/Controllers/Api/V1/ChannelController.php
 
 namespace App\Http\Controllers\Api\V1;
 
@@ -347,7 +346,7 @@ class ChannelController extends Controller
                 'oauth_code' => 'required|string'
             ]);
 
-            // 🔥 USE YOUR LINKEDIN PROVIDER
+            // USE YOUR LINKEDIN PROVIDER
             $provider = new \App\Services\SocialMedia\LinkedInProvider();
 
             if (!$provider->isConfigured()) {
@@ -387,6 +386,91 @@ class ChannelController extends Controller
     }
 
     /**
+     * Connect Facebook channel using your provider
+     */
+    public function connectFacebook(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'brand_id' => 'required|exists:brands,_id',
+                'oauth_code' => 'required|string'
+            ]);
+
+            // USE YOUR FACEBOOK PROVIDER
+            $provider = new \App\Services\SocialMedia\FacebookProvider();
+
+            if (!$provider->isConfigured()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Facebook provider not properly configured',
+                    'required_config' => [
+                        'FACEBOOK_CLIENT_ID' => 'Facebook App ID',
+                        'FACEBOOK_CLIENT_SECRET' => 'Facebook App Secret',
+                        'FACEBOOK_REDIRECT_URI' => 'OAuth redirect URI'
+                    ]
+                ], 400);
+            }
+
+            // Exchange code for tokens
+            $tokens = $provider->exchangeCodeForTokens($validated['oauth_code']);
+
+            // Get user's Facebook pages
+            $tempChannel = new Channel([
+                'oauth_tokens' => $tokens,
+                'provider' => 'facebook'
+            ]);
+
+            $pagesResult = $provider->getUserPages($tempChannel);
+            $selectedPage = null;
+            
+            if ($pagesResult['success'] && !empty($pagesResult['pages'])) {
+                $selectedPage = $pagesResult['pages'][0]; // Select first page
+            }
+
+            // Create channel record
+            $channel = Channel::create([
+                'brand_id' => $validated['brand_id'],
+                'provider' => 'facebook',
+                'handle' => $selectedPage['name'] ?? 'facebook_page',
+                'display_name' => $selectedPage['name'] ?? 'Facebook Page',
+                'platform_user_id' => $selectedPage['id'] ?? null,
+                'avatar_url' => $selectedPage['picture']['data']['url'] ?? null,
+                'oauth_tokens' => $tokens,
+                'provider_constraints' => [
+                    'page_id' => $selectedPage['id'] ?? null,
+                    'page_name' => $selectedPage['name'] ?? null,
+                    'followers_count' => $selectedPage['followers_count'] ?? 0,
+                    'category' => $selectedPage['category'] ?? 'Page'
+                ],
+                'connection_status' => 'connected',
+                'last_sync_at' => now(),
+                'active' => true
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Facebook channel connected successfully',
+                'data' => [
+                    'channel' => $channel->load(['brand']),
+                    'facebook_page' => $selectedPage,
+                    'available_pages' => $pagesResult['pages'] ?? [],
+                    'pages_count' => count($pagesResult['pages'] ?? [])
+                ]
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to connect Facebook channel',
+                'error' => $e->getMessage(),
+                'debug_info' => [
+                    'provider_configured' => class_exists('App\Services\SocialMedia\FacebookProvider'),
+                    'config_status' => 'Check Facebook app credentials in .env'
+                ]
+            ], 500);
+        }
+    }
+
+    /**
      * Get available providers
      */
     public function providers(): JsonResponse
@@ -399,12 +483,32 @@ class ChannelController extends Controller
                 'supported_media_types' => ['image', 'video', 'gif'],
                 'oauth_required' => true,
             ],
+            // FACEBOOK PROVIDER INFO
             'facebook' => [
                 'name' => 'Facebook',
-                'max_characters' => 63206,
-                'max_media' => 10,
+                'max_characters' => 63206,      // Much higher than others
+                'max_media' => 10,              // Support for carousel
                 'supported_media_types' => ['image', 'video'],
                 'oauth_required' => true,
+                'features' => [
+                    'page_posting' => true,
+                    'carousel_posts' => true,
+                    'video_upload' => true,
+                    'rich_analytics' => true,
+                    'reaction_tracking' => true,
+                    'demographic_insights' => true
+                ],
+                'constraints' => [
+                    'image_max_size' => '100MB',
+                    'video_max_size' => '10GB',
+                    'supported_formats' => ['jpg', 'jpeg', 'png', 'gif', 'mp4', 'mov', 'avi']
+                ],
+                'advantages' => [
+                    'high_character_limit' => '63,206 characters (vs 280 for Twitter)',
+                    'rich_media_support' => 'Videos up to 10GB, carousel posts',
+                    'detailed_analytics' => '6 reaction types + demographics',
+                    'reliable_api' => 'More stable than LinkedIn API'
+                ]
             ],
             'instagram' => [
                 'name' => 'Instagram',
@@ -438,7 +542,13 @@ class ChannelController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $providers
+            'data' => $providers,
+            'platform_comparison' => [
+                'highest_character_limit' => 'Facebook (63,206)',
+                'best_media_support' => 'Facebook (10GB videos, carousel)',
+                'richest_analytics' => 'Facebook (6 reaction types + demographics)',
+                'most_reliable_api' => 'Facebook (mature Graph API)'
+            ]
         ]);
     }
 }

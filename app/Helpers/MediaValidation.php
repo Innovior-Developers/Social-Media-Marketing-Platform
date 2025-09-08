@@ -9,14 +9,21 @@ class MediaValidation
      * 
      * @param mixed $file The uploaded file
      * @param string $mediaType The type of media (image, video, document)
+     * @param string $platform The target platform (optional)
      * @return array Validation result with 'valid' boolean and optional 'error' message
      */
-    public static function validateMediaFile($file, $mediaType): array
+    public static function validateMediaFile($file, $mediaType, $platform = null): array
     {
         if (!$file) {
             return ['valid' => false, 'error' => 'No file uploaded'];
         }
 
+        // Platform-specific validation
+        if ($platform === 'facebook') {
+            return self::validateFacebookMedia($file, $mediaType);
+        }
+
+        // Default validation
         switch ($mediaType) {
             case 'image':
                 $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif'];
@@ -53,10 +60,61 @@ class MediaValidation
     }
 
     /**
-     * Get allowed extensions for media type
+     * Facebook-specific media validation
      */
-    public static function getAllowedExtensions($mediaType): array
+    private static function validateFacebookMedia($file, $mediaType): array
     {
+        $constraints = config('services.facebook.constraints', []);
+
+        switch ($mediaType) {
+            case 'image':
+                $allowedExtensions = $constraints['supported_image_formats'] ?? ['jpg', 'jpeg', 'png', 'gif'];
+                $maxSize = $constraints['image_max_size'] ?? (100 * 1024 * 1024); // 100MB
+                break;
+            case 'video':
+                $allowedExtensions = $constraints['supported_video_formats'] ?? ['mp4', 'mov', 'avi'];
+                $maxSize = $constraints['video_max_size'] ?? (10 * 1024 * 1024 * 1024); // 10GB
+                break;
+            default:
+                return ['valid' => false, 'error' => 'Facebook only supports image and video uploads'];
+        }
+
+        $extension = strtolower($file->getClientOriginalExtension());
+        if (!in_array($extension, $allowedExtensions)) {
+            return [
+                'valid' => false,
+                'error' => "Facebook only supports " . implode(', ', $allowedExtensions) . " files for {$mediaType}"
+            ];
+        }
+
+        if ($file->getSize() > $maxSize) {
+            return [
+                'valid' => false,
+                'error' => "Facebook {$mediaType} must be smaller than " . self::formatFileSize($maxSize)
+            ];
+        }
+
+        return ['valid' => true];
+    }
+
+    /**
+     * Get allowed extensions for media type and platform
+     */
+    public static function getAllowedExtensions($mediaType, $platform = null): array
+    {
+        if ($platform === 'facebook') {
+            $constraints = config('services.facebook.constraints', []);
+            switch ($mediaType) {
+                case 'image':
+                    return $constraints['supported_image_formats'] ?? ['jpg', 'jpeg', 'png', 'gif'];
+                case 'video':
+                    return $constraints['supported_video_formats'] ?? ['mp4', 'mov', 'avi'];
+                default:
+                    return [];
+            }
+        }
+
+        // Default extensions
         switch ($mediaType) {
             case 'image':
                 return ['jpg', 'jpeg', 'png', 'gif'];
@@ -70,10 +128,23 @@ class MediaValidation
     }
 
     /**
-     * Get max file size for media type
+     * Get max file size for media type and platform
      */
-    public static function getMaxFileSize($mediaType): int
+    public static function getMaxFileSize($mediaType, $platform = null): int
     {
+        if ($platform === 'facebook') {
+            $constraints = config('services.facebook.constraints', []);
+            switch ($mediaType) {
+                case 'image':
+                    return $constraints['image_max_size'] ?? (100 * 1024 * 1024); // 100MB
+                case 'video':
+                    return $constraints['video_max_size'] ?? (10 * 1024 * 1024 * 1024); // 10GB
+                default:
+                    return 0;
+            }
+        }
+
+        // Default sizes
         switch ($mediaType) {
             case 'image':
                 return 20 * 1024 * 1024; // 20MB
@@ -84,5 +155,15 @@ class MediaValidation
             default:
                 return 0;
         }
+    }
+
+    /**
+     * Format file size for human reading
+     */
+    private static function formatFileSize(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $pow = floor(log($bytes) / log(1024));
+        return round($bytes / (1024 ** $pow), 1) . ' ' . $units[$pow];
     }
 }
