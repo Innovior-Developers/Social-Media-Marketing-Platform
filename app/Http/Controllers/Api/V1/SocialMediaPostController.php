@@ -1,5 +1,5 @@
 <?php
-// app/Http/Controllers/Api/V1/SocialMediaPostController.php
+// Updated SocialMediaPostController.php with Facebook integration
 
 namespace App\Http\Controllers\Api\V1;
 
@@ -307,7 +307,7 @@ class SocialMediaPostController extends Controller
     }
 
     /**
-     * Publish post immediately
+     * Publish post immediately - UPDATED WITH FACEBOOK SUPPORT
      */
     public function publish(Request $request, string $id): JsonResponse
     {
@@ -325,7 +325,7 @@ class SocialMediaPostController extends Controller
             $results = [];
             $hasErrors = false;
 
-            // 🔥 PUBLISH TO EACH PLATFORM USING YOUR PROVIDERS
+            // PUBLISH TO EACH PLATFORM USING YOUR PROVIDERS
             foreach ($post->platforms as $platform) {
                 if ($platform === 'linkedin') {
                     // Get user's LinkedIn channel
@@ -342,7 +342,7 @@ class SocialMediaPostController extends Controller
                         continue;
                     }
 
-                    // 🔥 USE YOUR LINKEDIN PROVIDER
+                    // USE YOUR LINKEDIN PROVIDER
                     $provider = new \App\Services\SocialMedia\LinkedInProvider();
                     $result = $provider->publishPost($post, $channel);
 
@@ -356,13 +356,50 @@ class SocialMediaPostController extends Controller
                             'url' => $result['url']
                         ]);
 
-                        // 🔥 DISPATCH ANALYTICS COLLECTION
+                        // DISPATCH ANALYTICS COLLECTION
+                        \App\Jobs\CollectAnalytics::dispatch($post, $platform);
+                    } else {
+                        $hasErrors = true;
+                    }
+                } 
+                // NEW FACEBOOK INTEGRATION
+                elseif ($platform === 'facebook') {
+                    // Get user's Facebook channel
+                    $channel = \App\Models\Channel::where('provider', 'facebook')
+                        ->where('connection_status', 'connected')
+                        ->first();
+
+                    if (!$channel) {
+                        $results[$platform] = [
+                            'success' => false,
+                            'error' => 'Facebook channel not connected'
+                        ];
+                        $hasErrors = true;
+                        continue;
+                    }
+
+                    // USE YOUR FACEBOOK PROVIDER
+                    $provider = new \App\Services\SocialMedia\FacebookProvider();
+                    $result = $provider->publishPost($post, $channel);
+
+                    $results[$platform] = $result;
+
+                    if ($result['success']) {
+                        // Update platform post data
+                        $post->updatePlatformPost($platform, [
+                            'platform_id' => $result['platform_id'],
+                            'published_at' => now(),
+                            'url' => $result['url'],
+                            'post_type' => $result['post_type'] ?? 'TEXT'
+                        ]);
+
+                        // 🔥 DISPATCH ANALYTICS COLLECTION FOR FACEBOOK
                         \App\Jobs\CollectAnalytics::dispatch($post, $platform);
                     } else {
                         $hasErrors = true;
                     }
                 }
-                // Add other platforms here later
+                // Add other platforms here later (Twitter, Instagram, etc.)
             }
 
             // Update post status
@@ -440,7 +477,7 @@ class SocialMediaPostController extends Controller
     }
 
     /**
-     * Get post analytics
+     * Get post analytics - ENHANCED WITH FACEBOOK SUPPORT
      */
     public function analytics(Request $request, string $id): JsonResponse
     {
@@ -452,12 +489,34 @@ class SocialMediaPostController extends Controller
                 ->orderBy('collected_at', 'desc')
                 ->get();
 
+            // COLLECT REAL-TIME ANALYTICS FROM FACEBOOK IF AVAILABLE
+            $platformAnalytics = [];
+            
+            if (in_array('facebook', $post->platforms ?? [])) {
+                $facebookData = $post->platform_posts['facebook'] ?? null;
+                if ($facebookData && isset($facebookData['platform_id'])) {
+                    $facebookAnalytics = \App\Helpers\FacebookHelpers::getFacebookAnalyticsSummary($post);
+                    if ($facebookAnalytics['success']) {
+                        $platformAnalytics['facebook'] = $facebookAnalytics;
+                    }
+                }
+            }
+
+            if (in_array('linkedin', $post->platforms ?? [])) {
+                $linkedinData = $post->platform_posts['linkedin'] ?? null;
+                if ($linkedinData && isset($linkedinData['platform_id'])) {
+                    $linkedinAnalytics = \App\Helpers\LinkedInHelpers::checkLinkedInPostStatusWithProvider($post);
+                    $platformAnalytics['linkedin'] = $linkedinAnalytics;
+                }
+            }
+
             $summary = [
                 'total_impressions' => $analytics->sum('metrics.impressions'),
                 'total_engagement' => $post->getTotalEngagement(),
                 'avg_engagement_rate' => $analytics->avg('metrics.engagement_rate'),
                 'best_performing_platform' => $analytics->sortByDesc('performance_score')->first()?->platform,
                 'latest_sync' => $analytics->first()?->collected_at,
+                'real_time_data_available' => !empty($platformAnalytics)
             ];
 
             return response()->json([
@@ -465,6 +524,7 @@ class SocialMediaPostController extends Controller
                 'data' => [
                     'post' => $post,
                     'analytics' => $analytics,
+                    'platform_analytics' => $platformAnalytics,
                     'summary' => $summary
                 ]
             ]);

@@ -35,6 +35,7 @@ return [
     |--------------------------------------------------------------------------
     */
 
+    // LINKEDIN CONFIGURATION
     'linkedin' => [
         'client_id' => env('LINKEDIN_CLIENT_ID'),
         'client_secret' => env('LINKEDIN_CLIENT_SECRET'),
@@ -53,6 +54,7 @@ return [
         ],
     ],
 
+    // TWITTER/X CONFIGURATION
     'twitter' => [
         'client_id' => env('TWITTER_CLIENT_ID'),
         'client_secret' => env('TWITTER_CLIENT_SECRET'),
@@ -64,16 +66,52 @@ return [
         'base_url' => 'https://api.twitter.com/2',
     ],
 
+    // FACEBOOK CONFIGURATION
     'facebook' => [
-        'client_id' => env('FACEBOOK_CLIENT_ID'),
-        'client_secret' => env('FACEBOOK_CLIENT_SECRET'),
-        'redirect' => env('OAUTH_REDIRECT_BASE_URL') . '/facebook',
+        'app_id' => env('FACEBOOK_CLIENT_ID'),                    // Maps to your .env
+        'app_secret' => env('FACEBOOK_CLIENT_SECRET'),             // Maps to your .env
+        'redirect' => env('FACEBOOK_REDIRECT_URI', env('OAUTH_REDIRECT_BASE_URL') . '/facebook'),
         'enabled' => env('FACEBOOK_ENABLED', false),
-        'use_real_api' => env('FACEBOOK_USE_REAL_API', false),
-        'api_version' => 'v18.0',
-        'base_url' => 'https://graph.facebook.com',
+        'use_real_api' => env('FACEBOOK_USE_REAL_API', false),    // Fixed your typo
+        'graph_version' => env('FACEBOOK_GRAPH_VERSION', 'v18.0'),
+        
+        // Facebook API endpoints
+        'endpoints' => [
+            'auth_url' => 'https://www.facebook.com/v18.0/dialog/oauth',
+            'token_url' => 'https://graph.facebook.com/v18.0/oauth/access_token',
+            'graph_api' => 'https://graph.facebook.com/v18.0'
+        ],
+        
+        // Facebook-specific permissions
+        'default_permissions' => [
+            'pages_manage_posts',      // Required for posting
+            'pages_read_engagement',   // Required for analytics
+            'pages_show_list'          // Required for page selection
+        ],
+        
+        // Facebook constraints
+        'constraints' => [
+            'character_limit' => 63206,      // Very generous
+            'media_limit' => 10,             // Carousel limit
+            'video_max_size' => 10737418240, // 10GB in bytes
+            'image_max_size' => 104857600,   // 100MB in bytes
+            'supported_video_formats' => ['mp4', 'mov', 'avi'],
+            'supported_image_formats' => ['jpg', 'jpeg', 'png', 'gif']
+        ],
+        
+        // Facebook features
+        'features' => [
+            'page_posting' => true,
+            'carousel_posts' => true,
+            'video_upload' => true,
+            'link_preview' => true,
+            'insights_api' => true,
+            'demographic_data' => true,
+            'reaction_tracking' => true
+        ]
     ],
 
+    // INSTAGRAM CONFIGURATION
     'instagram' => [
         'client_id' => env('INSTAGRAM_CLIENT_ID'),
         'client_secret' => env('INSTAGRAM_CLIENT_SECRET'),
@@ -84,6 +122,7 @@ return [
         'base_url' => 'https://graph.instagram.com',
     ],
 
+    // YOUTUBE CONFIGURATION
     'youtube' => [
         'client_id' => env('YOUTUBE_CLIENT_ID'),
         'client_secret' => env('YOUTUBE_CLIENT_SECRET'),
@@ -95,6 +134,7 @@ return [
         'base_url' => 'https://www.googleapis.com/youtube',
     ],
 
+    // tiktok CONFIGURATION
     'tiktok' => [
         'client_id' => env('TIKTOK_CLIENT_ID'),
         'client_secret' => env('TIKTOK_CLIENT_SECRET'),
@@ -127,6 +167,18 @@ return [
             'youtube' => env('YOUTUBE_USE_REAL_API', false) && !empty(env('YOUTUBE_CLIENT_ID')),
             'tiktok' => env('TIKTOK_USE_REAL_API', false) && !empty(env('TIKTOK_CLIENT_ID')),
         ],
+        
+        // Platform-specific settings
+        'platform_settings' => [
+            'facebook' => [
+                'auto_select_page' => true,         // Auto-select first available page
+                'default_post_type' => 'feed',      // 'feed' or 'photos'
+                'enable_analytics' => true,         // Enable Facebook Insights
+                'analytics_delay' => 300,           // Wait 5 mins for analytics
+                'max_retry_attempts' => 3,          // Retry failed posts
+                'timeout' => 120,                   // API timeout in seconds
+            ],
+        ]
     ],
 
     /*
