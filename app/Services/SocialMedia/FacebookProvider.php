@@ -1424,4 +1424,3 @@ class FacebookProvider extends AbstractSocialMediaProvider
         return $formatted;
     }
 }
-
