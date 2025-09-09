@@ -93,7 +93,6 @@ Route::get('/oauth/callback/{provider}', function ($provider, \Illuminate\Http\R
                 ]);
                 
             case 'facebook':
-                // 🔥 FACEBOOK OAUTH IMPLEMENTATION
                 return handleFacebookOAuth($request, $code, $state);
                 
             case 'twitter':
@@ -394,3 +393,9 @@ Route::prefix('test/oauth')->group(function () {
         }
     });
 });
+
+/*
+|--------------------------------------------------------------------------
+| End of OAuth Routes
+|--------------------------------------------------------------------------
+*/

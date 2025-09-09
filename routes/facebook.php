@@ -4,6 +4,8 @@
 // Platform: Social Media Marketing Platform
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
 use App\Services\SocialMedia\FacebookProvider;
 use App\Helpers\FacebookHelpers;
 use App\Helpers\MediaValidation;
@@ -870,91 +872,334 @@ Route::get('/test/facebook/comprehensive', function () {
     try {
         $results = [];
         $provider = new FacebookProvider();
+        $totalTests = 0;
+        $passedTests = 0;
         
-        // Test 1: Configuration
-        $results['configuration'] = [
-            'test' => 'Configuration Status',
-            'status' => $provider->isConfigured() ? 'PASSED' : 'FAILED',
-            'configured' => $provider->isConfigured(),
-            'enabled' => FacebookHelpers::isFacebookEnabled(),
-            'mode' => $provider->getCurrentMode()
-        ];
-        
-        // Test 2: OAuth Simulation
-        $results['oauth'] = [
-            'test' => 'OAuth Authentication',
-            'status' => 'PASSED',
-            'auth_url_generation' => !empty($provider->getAuthUrl()) ? 'WORKING' : 'FAILED',
-            'mode' => $provider->getCurrentMode()
-        ];
-        
-        // Test 3: Page Management
-        $tempChannel = FacebookHelpers::createTemporaryChannel([
-            'access_token' => 'test_token_' . uniqid()
-        ]) ?? new Channel(['oauth_tokens' => ['access_token' => 'mock'], 'provider' => 'facebook']);
-        
-        $pagesResult = $provider->getUserPages($tempChannel);
-        $results['page_management'] = [
-            'test' => 'Facebook Pages',
-            'status' => $pagesResult['success'] ? 'PASSED' : 'FAILED',
-            'pages_retrieved' => count($pagesResult['pages'] ?? []),
-            'mode' => $pagesResult['mode'] ?? 'unknown'
-        ];
-        
-        // Test 4: Post Publishing
-        $mockPost = new SocialMediaPost([
-            'content' => ['text' => 'Comprehensive test - ' . now()->toISOString()],
-            'media' => [],
-            'platforms' => ['facebook']
+        Log::info('Facebook Comprehensive Test: Starting', [
+            'provider_mode' => $provider->getCurrentMode(),
+            'is_stub' => $provider->isStubMode(),
+            'is_configured' => $provider->isConfigured()
         ]);
         
-        $publishResult = $provider->publishPost($mockPost, $tempChannel);
-        $results['post_publishing'] = [
-            'test' => 'Post Publishing',
-            'status' => $publishResult['success'] ? 'PASSED' : 'FAILED',
-            'platform_id' => $publishResult['platform_id'] ?? null,
-            'mode' => $publishResult['mode'] ?? 'unknown'
-        ];
+        // Test 1: Configuration - FIXED
+        $totalTests++;
+        try {
+            $configTest = [
+                'test' => 'Configuration Status',
+                'status' => $provider->isConfigured() ? 'PASSED' : 'FAILED',
+                'configured' => $provider->isConfigured(),
+                'enabled' => FacebookHelpers::isFacebookEnabled(),
+                'mode' => $provider->getCurrentMode()
+            ];
+            if ($configTest['status'] === 'PASSED') $passedTests++;
+            $results['configuration'] = $configTest;
+            
+            Log::info('Facebook Test 1 - Configuration', $configTest);
+        } catch (\Exception $e) {
+            $results['configuration'] = [
+                'test' => 'Configuration Status',
+                'status' => 'FAILED',
+                'error' => $e->getMessage()
+            ];
+            Log::error('Facebook Test 1 - Configuration Failed', ['error' => $e->getMessage()]);
+        }
         
-        // Test 5: Analytics
-        $analyticsResult = $provider->getAnalytics('test_post_' . uniqid(), $tempChannel);
-        $results['analytics'] = [
-            'test' => 'Analytics Collection',
-            'status' => $analyticsResult['success'] ? 'PASSED' : 'FAILED',
-            'metrics_available' => count($analyticsResult['metrics'] ?? []),
-            'demographics_available' => !empty($analyticsResult['demographics']),
-            'mode' => $analyticsResult['mode'] ?? 'unknown'
-        ];
+        // Test 2: OAuth Authentication - FIXED  
+        $totalTests++;
+        try {
+            $authUrl = $provider->getAuthUrl('comprehensive_test_' . time());
+            $oauthTest = [
+                'test' => 'OAuth Authentication',
+                'status' => !empty($authUrl) ? 'PASSED' : 'FAILED',
+                'auth_url_generation' => !empty($authUrl) ? 'WORKING' : 'FAILED',
+                'mode' => $provider->getCurrentMode()
+            ];
+            if ($oauthTest['status'] === 'PASSED') $passedTests++;
+            $results['oauth'] = $oauthTest;
+            
+            Log::info('Facebook Test 2 - OAuth', [
+                'status' => $oauthTest['status'],
+                'auth_url_generated' => !empty($authUrl)
+            ]);
+        } catch (\Exception $e) {
+            $results['oauth'] = [
+                'test' => 'OAuth Authentication',
+                'status' => 'FAILED',
+                'error' => $e->getMessage()
+            ];
+            Log::error('Facebook Test 2 - OAuth Failed', ['error' => $e->getMessage()]);
+        }
         
-        // Test 6: Post Management
-        $testPostId = 'test_' . rand(100000000000000, 999999999999999);
-        $existenceCheck = $provider->checkPostExists($testPostId, $tempChannel);
-        $results['post_management'] = [
-            'test' => 'Post Management',
-            'status' => $existenceCheck['success'] ? 'PASSED' : 'FAILED',
-            'existence_check' => 'WORKING',
-            'deletion_capability' => 'AVAILABLE'
-        ];
+        // FIXED: Create proper test channel based on current mode
+        $tempChannel = null;
+        try {
+            if ($provider->isStubMode()) {
+                // Create stub channel with mock tokens
+                $tempChannel = new Channel([
+                    'provider' => 'facebook',
+                    'handle' => 'facebook_test_user_' . uniqid(),
+                    'display_name' => 'Facebook Test User',
+                    'platform_user_id' => 'page_' . rand(100000000000000, 999999999999999),
+                    'oauth_tokens' => [
+                        'access_token' => 'facebook_test_token_' . uniqid(),
+                        'expires_at' => now()->addDays(60)->toISOString(),
+                        'token_type' => 'Bearer'
+                    ],
+                    'connection_status' => 'connected',
+                    'active' => true
+                ]);
+                
+                Log::info('Facebook Comprehensive: Created stub channel', [
+                    'channel_handle' => $tempChannel->handle,
+                    'has_tokens' => !empty($tempChannel->oauth_tokens)
+                ]);
+            } else {
+                // For real mode, we'd need actual tokens
+                // But since we're testing, we'll fall back to stub behavior
+                $tempChannel = new Channel([
+                    'provider' => 'facebook',
+                    'handle' => 'facebook_test_real',
+                    'display_name' => 'Facebook Real Test User',
+                    'oauth_tokens' => [
+                        'access_token' => 'would_need_real_token_here',
+                        'expires_at' => now()->addDays(60)->toISOString()
+                    ],
+                    'connection_status' => 'connected',
+                    'active' => true
+                ]);
+                
+                Log::info('Facebook Comprehensive: Created real mode channel (test)', [
+                    'mode' => 'real',
+                    'note' => 'Would need actual OAuth tokens for real API calls'
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Facebook Comprehensive: Channel creation failed', [
+                'error' => $e->getMessage()
+            ]);
+            
+            // Fallback channel
+            $tempChannel = new Channel([
+                'provider' => 'facebook',
+                'handle' => 'facebook_fallback_' . uniqid(),
+                'oauth_tokens' => ['access_token' => 'fallback_token'],
+                'connection_status' => 'connected'
+            ]);
+        }
         
-        // Test 7: Media Validation
-        $mockFile = new class('test.jpg', 1048576) {
-            private $name, $size;
-            public function __construct($name, $size) { $this->name = $name; $this->size = $size; }
-            public function getClientOriginalExtension() { return 'jpg'; }
-            public function getSize() { return $this->size; }
-        };
+        // Test 3: Page Management - FIXED
+        $totalTests++;
+        try {
+            Log::info('Facebook Test 3 - Page Management: Starting', [
+                'provider_mode' => $provider->getCurrentMode(),
+                'channel_handle' => $tempChannel->handle ?? 'null'
+            ]);
+            
+            $pagesResult = $provider->getUserPages($tempChannel);
+            
+            Log::info('Facebook Test 3 - Page Management: Result', [
+                'success' => $pagesResult['success'] ?? false,
+                'pages_count' => count($pagesResult['pages'] ?? []),
+                'mode' => $pagesResult['mode'] ?? 'unknown'
+            ]);
+            
+            $pageTest = [
+                'test' => 'Facebook Pages',
+                'status' => $pagesResult['success'] ? 'PASSED' : 'FAILED',
+                'pages_retrieved' => count($pagesResult['pages'] ?? []),
+                'mode' => $pagesResult['mode'] ?? $provider->getCurrentMode()
+            ];
+            
+            if ($pageTest['status'] === 'PASSED') $passedTests++;
+            $results['page_management'] = $pageTest;
+        } catch (\Exception $e) {
+            Log::error('Facebook Test 3 - Page Management: Exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            $results['page_management'] = [
+                'test' => 'Facebook Pages',
+                'status' => 'FAILED',
+                'error' => $e->getMessage(),
+                'pages_retrieved' => 0,
+                'mode' => $provider->getCurrentMode()
+            ];
+        }
         
-        $mediaValidation = MediaValidation::validateMediaFile($mockFile, 'image', 'facebook');
-        $results['media_validation'] = [
-            'test' => 'Media Validation',
-            'status' => $mediaValidation['valid'] ? 'PASSED' : 'FAILED',
-            'facebook_specific' => 'WORKING',
-            'constraints_loaded' => !empty(FacebookHelpers::getFacebookConstraints())
-        ];
+        // Test 4: Post Publishing - FIXED
+        $totalTests++;
+        try {
+            Log::info('Facebook Test 4 - Post Publishing: Starting', [
+                'provider_mode' => $provider->getCurrentMode(),
+                'channel_provider' => $tempChannel->provider ?? 'unknown'
+            ]);
+            
+            $mockPost = new SocialMediaPost([
+                'content' => ['text' => 'Facebook comprehensive test - ' . now()->toISOString()],
+                'media' => [],
+                'platforms' => ['facebook'],
+                'user_id' => 'test_user_comprehensive',
+                'post_status' => 'draft'
+            ]);
+            
+            $publishResult = $provider->publishPost($mockPost, $tempChannel);
+            
+            Log::info('Facebook Test 4 - Post Publishing: Result', [
+                'success' => $publishResult['success'] ?? false,
+                'platform_id' => $publishResult['platform_id'] ?? null,
+                'mode' => $publishResult['mode'] ?? 'unknown'
+            ]);
+            
+            $publishTest = [
+                'test' => 'Post Publishing',
+                'status' => $publishResult['success'] ? 'PASSED' : 'FAILED',
+                'platform_id' => $publishResult['platform_id'] ?? null,
+                'mode' => $publishResult['mode'] ?? $provider->getCurrentMode()
+            ];
+            
+            if ($publishTest['status'] === 'PASSED') $passedTests++;
+            $results['post_publishing'] = $publishTest;
+        } catch (\Exception $e) {
+            Log::error('Facebook Test 4 - Post Publishing: Exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            $results['post_publishing'] = [
+                'test' => 'Post Publishing',
+                'status' => 'FAILED',
+                'error' => $e->getMessage(),
+                'platform_id' => null,
+                'mode' => $provider->getCurrentMode()
+            ];
+        }
         
-        $overallStatus = collect($results)->every(function($result) {
-            return $result['status'] === 'PASSED';
-        });
+        // Test 5: Analytics - FIXED
+        $totalTests++;
+        try {
+            Log::info('Facebook Test 5 - Analytics: Starting');
+            
+            $testPostId = 'fb_test_' . rand(100000000000000, 999999999999999);
+            $analyticsResult = $provider->getAnalytics($testPostId, $tempChannel);
+            
+            Log::info('Facebook Test 5 - Analytics: Result', [
+                'success' => $analyticsResult['success'] ?? false,
+                'metrics_count' => count($analyticsResult['metrics'] ?? []),
+                'mode' => $analyticsResult['mode'] ?? 'unknown'
+            ]);
+            
+            $analyticsTest = [
+                'test' => 'Analytics Collection',
+                'status' => $analyticsResult['success'] ? 'PASSED' : 'FAILED',
+                'metrics_available' => count($analyticsResult['metrics'] ?? []),
+                'demographics_available' => !empty($analyticsResult['demographics']),
+                'mode' => $analyticsResult['mode'] ?? $provider->getCurrentMode()
+            ];
+            
+            if ($analyticsTest['status'] === 'PASSED') $passedTests++;
+            $results['analytics'] = $analyticsTest;
+        } catch (\Exception $e) {
+            Log::error('Facebook Test 5 - Analytics: Exception', [
+                'error' => $e->getMessage()
+            ]);
+            
+            $results['analytics'] = [
+                'test' => 'Analytics Collection',
+                'status' => 'FAILED',
+                'error' => $e->getMessage()
+            ];
+        }
+        
+        // Test 6: Post Management - FIXED
+        $totalTests++;
+        try {
+            Log::info('Facebook Test 6 - Post Management: Starting');
+            
+            $testPostId = 'fb_test_' . rand(100000000000000, 999999999999999);
+            $existenceCheck = $provider->checkPostExists($testPostId, $tempChannel);
+            
+            Log::info('Facebook Test 6 - Post Management: Result', [
+                'success' => $existenceCheck['success'] ?? false,
+                'exists' => $existenceCheck['exists'] ?? 'unknown',
+                'mode' => $existenceCheck['mode'] ?? 'unknown'
+            ]);
+            
+            $managementTest = [
+                'test' => 'Post Management',
+                'status' => $existenceCheck['success'] ? 'PASSED' : 'FAILED',
+                'existence_check' => $existenceCheck['success'] ? 'WORKING' : 'FAILED',
+                'deletion_capability' => 'AVAILABLE'
+            ];
+            
+            if ($managementTest['status'] === 'PASSED') $passedTests++;
+            $results['post_management'] = $managementTest;
+        } catch (\Exception $e) {
+            Log::error('Facebook Test 6 - Post Management: Exception', [
+                'error' => $e->getMessage()
+            ]);
+            
+            $results['post_management'] = [
+                'test' => 'Post Management',
+                'status' => 'FAILED',
+                'error' => $e->getMessage()
+            ];
+        }
+        
+        // Test 7: Media Validation - FIXED
+        $totalTests++;
+        try {
+            Log::info('Facebook Test 7 - Media Validation: Starting');
+            
+            $mockFile = new class('test.jpg', 1048576) {
+                private $name, $size;
+                public function __construct($name, $size) { 
+                    $this->name = $name; 
+                    $this->size = $size; 
+                }
+                public function getClientOriginalExtension() { 
+                    return pathinfo($this->name, PATHINFO_EXTENSION); 
+                }
+                public function getSize() { 
+                    return $this->size; 
+                }
+            };
+            
+            $mediaValidation = MediaValidation::validateMediaFile($mockFile, 'image', 'facebook');
+            
+            Log::info('Facebook Test 7 - Media Validation: Result', [
+                'valid' => $mediaValidation['valid'] ?? false
+            ]);
+            
+            $mediaTest = [
+                'test' => 'Media Validation',
+                'status' => $mediaValidation['valid'] ? 'PASSED' : 'FAILED',
+                'facebook_specific' => 'WORKING',
+                'constraints_loaded' => !empty(FacebookHelpers::getFacebookConstraints())
+            ];
+            
+            if ($mediaTest['status'] === 'PASSED') $passedTests++;
+            $results['media_validation'] = $mediaTest;
+        } catch (\Exception $e) {
+            Log::error('Facebook Test 7 - Media Validation: Exception', [
+                'error' => $e->getMessage()
+            ]);
+            
+            $results['media_validation'] = [
+                'test' => 'Media Validation',
+                'status' => 'FAILED',
+                'error' => $e->getMessage()
+            ];
+        }
+        
+        $overallStatus = $passedTests === $totalTests;
+        
+        Log::info('Facebook Comprehensive Test: Completed', [
+            'total_tests' => $totalTests,
+            'passed_tests' => $passedTests,
+            'failed_tests' => $totalTests - $passedTests,
+            'overall_status' => $overallStatus ? 'PASSED' : 'FAILED'
+        ]);
         
         return [
             'status' => 'success',
@@ -962,15 +1207,22 @@ Route::get('/test/facebook/comprehensive', function () {
             'timestamp' => now()->toISOString(),
             'comprehensive_test' => 'COMPLETED',
             'overall_status' => $overallStatus ? 'ALL TESTS PASSED ✅' : 'SOME TESTS FAILED ⚠️',
-            'total_tests' => count($results),
-            'passed_tests' => collect($results)->where('status', 'PASSED')->count(),
-            'failed_tests' => collect($results)->where('status', 'FAILED')->count(),
+            'total_tests' => $totalTests,
+            'passed_tests' => $passedTests,
+            'failed_tests' => $totalTests - $passedTests,
             'test_results' => $results,
             'facebook_implementation' => [
                 'provider_class' => 'FacebookProvider - LOADED ✅',
                 'helper_class' => 'FacebookHelpers - LOADED ✅',
                 'media_validation' => 'MediaValidation - LOADED ✅',
                 'route_file' => 'routes/facebook.php - ACTIVE ✅'
+            ],
+            'debug_info' => [
+                'provider_mode_final' => $provider->getCurrentMode(),
+                'provider_is_stub' => $provider->isStubMode(),
+                'provider_configured' => $provider->isConfigured(),
+                'channel_created' => !is_null($tempChannel),
+                'log_entries_written' => 'Check storage/logs/laravel.log for detailed debugging'
             ],
             'advantages_over_linkedin' => [
                 'api_reliability' => '🎯 Facebook Graph API is more stable',
@@ -983,13 +1235,173 @@ Route::get('/test/facebook/comprehensive', function () {
             'ready_for_production' => $overallStatus
         ];
     } catch (\Exception $e) {
+        Log::error('Facebook Comprehensive Test: Fatal Exception', [
+            'error' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
         return [
             'status' => 'error',
             'error' => $e->getMessage(),
-            'comprehensive_test' => 'FAILED'
+            'comprehensive_test' => 'FAILED',
+            'timestamp' => now()->toISOString(),
+            'developer' => 'J33WAKASUPUN',
+            'debug_location' => $e->getFile() . ':' . $e->getLine()
         ];
     }
 });
+
+// === FACEBOOK DEBUG & DIAGNOSTIC ROUTES ===
+
+Route::prefix('test/facebook')->group(function () {
+    
+    // Debug Route - Check Available Token Files (MISSING ROUTE)
+    Route::get('/debug-tokens', function () {
+        try {
+            $oauthSessionsPath = storage_path('app/oauth_sessions');
+            $tokenFiles = glob($oauthSessionsPath . '/*.json');
+            $facebookFiles = array_filter($tokenFiles, function($file) {
+                return str_contains(basename($file), 'oauth_tokens_facebook_');
+            });
+            
+            $tokenInfo = [];
+            foreach ($facebookFiles as $file) {
+                $tokenData = json_decode(file_get_contents($file), true);
+                $tokenInfo[] = [
+                    'file' => basename($file),
+                    'session_key' => str_replace('.json', '', str_replace('oauth_tokens_', '', basename($file))),
+                    'exists' => true,
+                    'has_access_token' => !empty($tokenData['access_token']),
+                    'expires_at' => $tokenData['expires_at'] ?? 'Unknown',
+                    'scopes' => $tokenData['scopes'] ?? 'Unknown',
+                    'created_at' => $tokenData['created_at'] ?? 'Unknown',
+                    'mode' => $tokenData['mode'] ?? 'real',
+                    'token_type' => $tokenData['token_type'] ?? 'bearer'
+                ];
+            }
+            
+            return response()->json([
+                'status' => 'Token Debug Info Retrieved! 🔍',
+                'developer' => 'J33WAKASUPUN',
+                'timestamp' => now()->format('Y-m-d H:i:s'),
+                'total_oauth_files' => count($tokenFiles),
+                'facebook_files' => count($facebookFiles),
+                'facebook_tokens_detail' => $tokenInfo,
+                'storage_path' => $oauthSessionsPath,
+                'all_oauth_files' => array_map('basename', $tokenFiles),
+                'recommendation' => count($facebookFiles) > 0 ? 
+                    'Facebook tokens found - ready for posting!' : 
+                    'Complete OAuth first: GET /test/facebook/oauth/url',
+                'test_posting' => count($facebookFiles) > 0 ? 
+                    'POST /test/facebook/posts/publish-test' : 
+                    'Complete OAuth authentication first'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'error' => 'Debug failed',
+                'message' => $e->getMessage(),
+                'developer' => 'J33WAKASUPUN'
+            ]);
+        }
+    });
+    
+    // Test Direct Facebook Posting
+    Route::post('/direct-post-test', function (Request $request) {
+        try {
+            $oauthSessionsPath = storage_path('app/oauth_sessions');
+            $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+            
+            if (empty($facebookFiles)) {
+                return response()->json([
+                    'error' => 'No Facebook tokens found',
+                    'oauth_url' => 'Complete OAuth: GET /test/facebook/oauth/url'
+                ], 404);
+            }
+            
+            // Use the latest token
+            $latestTokenFile = end($facebookFiles);
+            $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+            
+            // Get pages
+            $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
+                'access_token' => $facebookToken['access_token'],
+                'fields' => 'id,name,access_token,category'
+            ]);
+            
+            if (!$pagesResponse->successful()) {
+                return response()->json([
+                    'error' => 'Failed to get Facebook pages',
+                    'response' => $pagesResponse->json()
+                ], 400);
+            }
+            
+            $pages = $pagesResponse->json()['data'] ?? [];
+            
+            if (empty($pages)) {
+                return response()->json([
+                    'error' => 'No Facebook pages found - create a page first'
+                ], 400);
+            }
+            
+            $selectedPage = $pages[0];
+            $pageAccessToken = $selectedPage['access_token'];
+            
+            $message = $request->input('message', '🎉 DIRECT FACEBOOK POST TEST SUCCESS!
+
+✅ Route fixes applied successfully  
+✅ 404 errors resolved
+✅ Facebook API working via Laravel routes
+✅ 4 Facebook OAuth sessions active
+
+Built by J33WAKASUPUN! 🚀
+
+#FacebookAPI #RouteFixes #Success #J33WAKASUPUN');
+            
+            // Post to Facebook
+            $postResponse = Http::post("https://graph.facebook.com/v18.0/{$selectedPage['id']}/feed", [
+                'message' => $message,
+                'access_token' => $pageAccessToken
+            ]);
+            
+            if ($postResponse->successful()) {
+                $postData = $postResponse->json();
+                
+                return response()->json([
+                    'status' => '🎉 FACEBOOK POST SUCCESS VIA LARAVEL ROUTES! 🎉',
+                    'developer' => 'J33WAKASUPUN',
+                    'timestamp' => now()->format('Y-m-d H:i:s'),
+                    'route' => '/test/facebook/direct-post-test',
+                    'method' => 'Laravel HTTP Client + Facebook Graph API',
+                    'post_id' => $postData['id'],
+                    'post_url' => "https://facebook.com/{$postData['id']}",
+                    'page_info' => [
+                        'id' => $selectedPage['id'],
+                        'name' => $selectedPage['name'],
+                        'category' => $selectedPage['category'] ?? 'Software company'
+                    ],
+                    'token_file_used' => basename($latestTokenFile),
+                    'integration_status' => 'FACEBOOK LARAVEL INTEGRATION WORKING! 🚀'
+                ]);
+            } else {
+                return response()->json([
+                    'error' => 'Failed to publish post',
+                    'facebook_response' => $postResponse->json()
+                ], $postResponse->status());
+            }
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Direct post test failed',
+                'message' => $e->getMessage(),
+                'line' => $e->getLine()
+            ], 500);
+        }
+    });
+    
+}); // Close the Route::prefix('test/facebook') group
 
 /*
 |--------------------------------------------------------------------------
