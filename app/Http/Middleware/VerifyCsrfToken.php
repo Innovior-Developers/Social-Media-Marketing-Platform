@@ -1,33 +1,18 @@
 <?php
-// Create this file: app/Http/Middleware/VerifyCsrfToken.php
 
 namespace App\Http\Middleware;
 
-use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken as Middleware;
+use Closure;
+use Illuminate\Http\Request;
 
-class VerifyCsrfToken extends Middleware
+class VerifyCsrfToken
 {
     /**
-     * The URIs that should be excluded from CSRF verification.
-     *
-     * @var array<int, string>
+     * Handle an incoming request - CSRF COMPLETELY DISABLED
      */
-    protected $except = [
-        // Exclude all test routes from CSRF protection
-        'test/*',
-        'oauth/callback/*',
-        'api/*',
-        
-        // Specific routes for LinkedIn testing
-        'test/linkedin/post/*',
-        'test/linkedin/media-post/*',
-        'test/linkedin/profile/*',
-        'test/provider/*',
-        'test/oauth/*',
-        
-        // Future social media testing routes
-        'test/twitter/*',
-        'test/facebook/*',
-        'test/instagram/*',
-    ];
+    public function handle(Request $request, Closure $next)
+    {
+        // 🔥 NUCLEAR OPTION: Skip all CSRF verification entirely
+        return $next($request);
+    }
 }

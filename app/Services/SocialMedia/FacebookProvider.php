@@ -17,7 +17,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
     }
 
     /**
-     * Override stub mode detection for mixed mode support
+     * Override stub mode detection for mixed mode support - FIXED
      */
     public function isStubMode(): bool
     {
@@ -25,13 +25,23 @@ class FacebookProvider extends AbstractSocialMediaProvider
         $realProviders = config('services.social_media.real_providers', []);
         $shouldUseReal = $realProviders['facebook'] ?? false;
 
-        if ($shouldUseReal) {
+        if ($shouldUseReal && $this->hasRealCredentials()) {
             Log::info('Facebook Provider: Using REAL API mode');
             return false; // Use real API
         }
 
         Log::info('Facebook Provider: Using STUB mode');
         return true; // Use stub mode
+    }
+
+    /**
+     * Check if real credentials are available
+     */
+    private function hasRealCredentials(): bool
+    {
+        return !empty($this->getConfig('app_id')) &&
+            !empty($this->getConfig('app_secret')) &&
+            !empty($this->getConfig('redirect'));
     }
 
     public function authenticate(array $credentials): array
@@ -61,7 +71,8 @@ class FacebookProvider extends AbstractSocialMediaProvider
                         'category' => 'Business',
                         'followers_count' => rand(100, 10000)
                     ]
-                ]
+                ],
+                'mode' => 'stub'
             ];
         }
 
@@ -71,6 +82,8 @@ class FacebookProvider extends AbstractSocialMediaProvider
 
     protected function getRealAuthUrl(string $state = null): string
     {
+        $baseUrl = 'https://www.facebook.com/v18.0/dialog/oauth';
+
         $params = [
             'client_id' => $this->getConfig('app_id'),
             'redirect_uri' => $this->getConfig('redirect'),
@@ -79,11 +92,11 @@ class FacebookProvider extends AbstractSocialMediaProvider
             'state' => $state ?? csrf_token()
         ];
 
-        $authUrl = $this->getConfig('endpoints.auth_url', 'https://www.facebook.com/v18.0/dialog/oauth') . '?' . http_build_query($params);
+        $authUrl = $baseUrl . '?' . http_build_query($params);
 
         Log::info('Facebook: Generated auth URL', [
             'url' => $authUrl,
-            'app_id' => $this->getConfig('app_id'),
+            'app_id' => substr($this->getConfig('app_id'), 0, 8) . '...',
             'redirect_uri' => $this->getConfig('redirect'),
             'scopes' => $this->getDefaultScopes()
         ]);
@@ -93,7 +106,9 @@ class FacebookProvider extends AbstractSocialMediaProvider
 
     protected function getRealTokens(string $code): array
     {
-        $tokenUrl = $this->getConfig('endpoints.token_url', 'https://graph.facebook.com/v18.0/oauth/access_token');
+        // 🔥 FIXED: Hard-code the token URL to prevent null issues
+        $tokenUrl = 'https://graph.facebook.com/v18.0/oauth/access_token';
+
         $requestData = [
             'client_id' => $this->getConfig('app_id'),
             'client_secret' => $this->getConfig('app_secret'),
@@ -103,8 +118,9 @@ class FacebookProvider extends AbstractSocialMediaProvider
 
         Log::info('Facebook: Exchanging code for tokens', [
             'token_url' => $tokenUrl,
-            'app_id' => $this->getConfig('app_id'),
-            'redirect_uri' => $this->getConfig('redirect')
+            'app_id' => substr($this->getConfig('app_id'), 0, 8) . '...',
+            'redirect_uri' => $this->getConfig('redirect'),
+            'code_length' => strlen($code)
         ]);
 
         $response = Http::get($tokenUrl, $requestData);
@@ -153,16 +169,26 @@ class FacebookProvider extends AbstractSocialMediaProvider
         return $this->publishRealPost($post, $channel);
     }
 
+    /**
+     * 🔥 FIXED STUB POST METHOD
+     */
     private function publishStubPost(SocialMediaPost $post, Channel $channel): array
     {
         $formatted = $this->formatPost($post);
+        $platformId = rand(100000000000000, 999999999999999) . '_' . rand(100000000000000, 999999999999999);
+
+        Log::info('Facebook: Publishing stub post', [
+            'content_length' => strlen($formatted['content']),
+            'media_count' => count($post->media ?? []),
+            'platform_id' => $platformId
+        ]);
 
         return [
             'success' => true,
-            'platform_id' => rand(100000000000000, 999999999999999) . '_' . rand(100000000000000, 999999999999999),
+            'platform_id' => $platformId,
             'url' => 'https://facebook.com/permalink.php?story_fbid=' . rand(100000000000000, 999999999999999) . '&id=' . rand(100000000000000, 999999999999999),
             'published_at' => now()->toISOString(),
-            'post_type' => !empty($formatted['media']) ? 'PHOTO' : 'STATUS',
+            'post_type' => !empty($post->media) ? 'PHOTO' : 'STATUS',
             'initial_metrics' => [
                 'reach' => rand(50, 2000),
                 'impressions' => rand(100, 3000),
@@ -238,7 +264,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
             }
 
             $pages = $response->json()['data'] ?? [];
-            
+
             if (empty($pages)) {
                 return [
                     'success' => false,
@@ -255,17 +281,6 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'page_id' => $pageId,
                 'page_name' => $selectedPage['name'],
                 'category' => $selectedPage['category'] ?? 'unknown'
-            ]);
-
-            // Update channel with page information
-            $channel->update([
-                'platform_user_id' => $pageId,
-                'display_name' => $selectedPage['name'],
-                'provider_constraints' => array_merge($channel->provider_constraints ?? [], [
-                    'page_id' => $pageId,
-                    'page_name' => $selectedPage['name'],
-                    'followers_count' => $selectedPage['followers_count'] ?? 0
-                ])
             ]);
 
             return [
@@ -376,7 +391,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
             ]);
 
             $endpoint = $media['type'] === 'video' ? 'videos' : 'photos';
-            
+
             $postData = [
                 'message' => $formatted['content'],
                 'access_token' => $pageToken
@@ -462,7 +477,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
             $mediaObjects = [];
             foreach ($post->media as $index => $media) {
                 $uploadResult = $this->uploadMediaForCarousel($media, $pageId, $pageToken);
-                
+
                 if ($uploadResult['success']) {
                     $mediaObjects[] = [
                         'media_fbid' => $uploadResult['media_id']
@@ -622,7 +637,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'post_impressions',
                 'post_reach',
                 'post_reactions_like_total',
-                'post_reactions_love_total', 
+                'post_reactions_love_total',
                 'post_reactions_wow_total',
                 'post_reactions_haha_total',
                 'post_reactions_sorry_total',
@@ -747,7 +762,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
         }
 
         // Calculate total reactions
-        $metrics['total_reactions'] = $metrics['likes'] + $metrics['loves'] + 
+        $metrics['total_reactions'] = $metrics['likes'] + $metrics['loves'] +
             $metrics['wows'] + $metrics['hahas'] + $metrics['sorrys'] + $metrics['angers'];
 
         // Calculate engagement rate
@@ -811,7 +826,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 if (preg_match('/^(\w+)\.(\d+-\d+)$/', $key, $matches)) {
                     $gender = $matches[1];
                     $ageGroup = $matches[2];
-                    
+
                     $genderSplit[$gender] = ($genderSplit[$gender] ?? 0) + $value;
                     $ageGroups[$ageGroup] = ($ageGroups[$ageGroup] ?? 0) + $value;
                 }
@@ -948,9 +963,11 @@ class FacebookProvider extends AbstractSocialMediaProvider
     public function getDefaultScopes(): array
     {
         return [
-            'pages_manage_posts',
-            'pages_read_engagement',
-            'pages_show_list'
+            'pages_show_list',           // List user's pages
+            'pages_read_user_content',   // Read page content  
+            'business_management',       // Business management
+            'pages_manage_metadata',     // Manage page settings
+            'pages_manage_posts'         // Still works for some apps
         ];
     }
 
@@ -982,13 +999,23 @@ class FacebookProvider extends AbstractSocialMediaProvider
         return $this->getRealAuthUrl($state);
     }
 
+    /**
+     * 🔥 FIXED CONFIGURATION CHECK
+     */
     public function isConfigured(): bool
     {
+        // In stub mode, we don't need real credentials
+        if ($this->isStubMode()) {
+            Log::info('Facebook: Configuration check in stub mode - always configured');
+            return true;
+        }
+
+        // In real mode, we need actual credentials
         $hasAppId = !empty($this->getConfig('app_id'));
         $hasAppSecret = !empty($this->getConfig('app_secret'));
         $hasRedirect = !empty($this->getConfig('redirect'));
 
-        Log::info('Facebook: Configuration check', [
+        Log::info('Facebook: Configuration check in real mode', [
             'app_id_set' => $hasAppId,
             'app_secret_set' => $hasAppSecret,
             'redirect_set' => $hasRedirect,
@@ -1032,11 +1059,12 @@ class FacebookProvider extends AbstractSocialMediaProvider
     }
 
     /**
-     * Get user's Facebook pages
+     * 🔥 FIXED USER PAGES METHOD
      */
     public function getUserPages(Channel $channel): array
     {
         if ($this->isStubMode()) {
+            Log::info('Facebook: Getting pages in stub mode');
             return [
                 'success' => true,
                 'pages' => [
@@ -1045,14 +1073,24 @@ class FacebookProvider extends AbstractSocialMediaProvider
                         'name' => 'My Facebook Page',
                         'category' => 'Business',
                         'followers_count' => rand(100, 10000),
-                        'access_token' => 'page_token_' . uniqid()
+                        'access_token' => 'page_token_' . uniqid(),
+                        'picture' => [
+                            'data' => [
+                                'url' => 'https://graph.facebook.com/page_id/picture'
+                            ]
+                        ]
                     ],
                     [
                         'id' => 'page_' . rand(100000000000000, 999999999999999),
-                        'name' => 'Another Page',
+                        'name' => 'Another Facebook Page',
                         'category' => 'Community',
                         'followers_count' => rand(50, 5000),
-                        'access_token' => 'page_token_' . uniqid()
+                        'access_token' => 'page_token_' . uniqid(),
+                        'picture' => [
+                            'data' => [
+                                'url' => 'https://graph.facebook.com/page_id/picture'
+                            ]
+                        ]
                     ]
                 ],
                 'mode' => 'stub'
@@ -1092,18 +1130,36 @@ class FacebookProvider extends AbstractSocialMediaProvider
         }
     }
 
-    // === 🔥 MISSING METHODS ADDED ===
-
     /**
-     * Check if Facebook post exists
+     * 🔥 FIXED POST EXISTS CHECK
      */
     public function checkPostExists(string $postId, Channel $channel): array
     {
         if ($this->isStubMode()) {
+            Log::info('Facebook: Checking post exists in stub mode', ['post_id' => $postId]);
             return $this->checkStubPostExists($postId);
         }
 
         return $this->checkRealPostExists($postId, $channel);
+    }
+
+    private function checkStubPostExists(string $postId): array
+    {
+        $exists = rand(1, 10) > 3; // 70% chance exists
+
+        Log::info('Facebook: Stub post existence check', [
+            'post_id' => $postId,
+            'exists' => $exists
+        ]);
+
+        return [
+            'success' => true,
+            'exists' => $exists,
+            'post_id' => $postId,
+            'status_code' => $exists ? 200 : 404,
+            'checked_at' => now()->toISOString(),
+            'mode' => 'stub'
+        ];
     }
 
     private function checkRealPostExists(string $postId, Channel $channel): array
@@ -1163,20 +1219,6 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'mode' => 'real'
             ];
         }
-    }
-
-    private function checkStubPostExists(string $postId): array
-    {
-        $exists = rand(1, 10) > 3; // 70% chance exists
-
-        return [
-            'success' => true,
-            'exists' => $exists,
-            'post_id' => $postId,
-            'status_code' => $exists ? 200 : 404,
-            'checked_at' => now()->toISOString(),
-            'mode' => 'stub'
-        ];
     }
 
     /**
@@ -1373,12 +1415,13 @@ class FacebookProvider extends AbstractSocialMediaProvider
     protected function formatPost(SocialMediaPost $post): array
     {
         $formatted = parent::formatPost($post);
-        
+
         // Facebook-specific formatting
         if (!empty($post->content['link'])) {
             $formatted['link'] = $post->content['link'];
         }
-        
+
         return $formatted;
     }
 }
+

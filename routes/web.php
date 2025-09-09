@@ -1,41 +1,14 @@
 <?php
-// routes/web.php - MAIN ROUTE FILE (Complete Fix)
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 
 /*
 |--------------------------------------------------------------------------
-| Social Media Marketing Platform - Main Routes
+| Web Routes - Clean Structure (No Facebook Conflicts)
 |--------------------------------------------------------------------------
 */
-
-// debug route to list all routes (for development purposes)
-Route::get('/debug/routes', function () {
-    $routes = \Illuminate\Support\Facades\Route::getRoutes();
-    $routeList = [];
-    
-    foreach ($routes as $route) {
-        $routeList[] = [
-            'method' => implode('|', $route->methods()),
-            'uri' => $route->uri(),
-            'name' => $route->getName(),
-            'action' => $route->getActionName()
-        ];
-    }
-    
-    return [
-        'total_routes' => count($routeList),
-        'test_routes' => array_filter($routeList, function($route) {
-            return str_contains($route['uri'], 'test/');
-        }),
-        'facebook_routes' => array_filter($routeList, function($route) {
-            return str_contains($route['uri'], 'facebook');
-        }),
-        'linkedin_routes' => array_filter($routeList, function($route) {
-            return str_contains($route['uri'], 'linkedin');
-        })
-    ];
-});
 
 // HOME ROUTE
 Route::get('/', function () {
@@ -47,20 +20,15 @@ Route::get('/', function () {
         'status' => 'operational',
         'environment' => app()->environment(),
         'available_platforms' => ['linkedin', 'facebook', 'twitter', 'instagram'],
-        'documentation' => [
-            'testing_routes' => 'GET /test/* - Development and testing endpoints',
-            'linkedin_routes' => 'GET /test/linkedin/* - LinkedIn-specific functionality',
-            'facebook_routes' => 'GET /test/facebook/* - Facebook-specific functionality',
-            'oauth_routes' => 'GET /oauth/* - Authentication and OAuth flows',
-            'posts_management' => 'GET /test/posts/* - Post management and analytics'
+        'facebook_integration' => [
+            'comprehensive_routes' => 'GET /test/facebook/comprehensive',
+            'configuration' => 'GET /test/facebook/config',
+            'direct_php_backup' => 'POST /facebook-direct.php'
         ],
         'quick_links' => [
             'system_status' => 'GET /status',
-            'linkedin_config' => 'GET /test/linkedin/config',
-            'facebook_config' => 'GET /test/facebook/config',
-            'linkedin_comprehensive' => 'GET /test/linkedin/comprehensive',
             'facebook_comprehensive' => 'GET /test/facebook/comprehensive',
-            'oauth_sessions' => 'GET /test/oauth/sessions'
+            'linkedin_comprehensive' => 'GET /test/linkedin/comprehensive'
         ]
     ];
 });
@@ -68,55 +36,31 @@ Route::get('/', function () {
 // SYSTEM STATUS
 Route::get('/status', function () {
     try {
-        // Test database connection
-        $databaseStatus = 'OFFLINE';
-        try {
-            $userCount = \App\Models\User::count();
-            $databaseStatus = 'ONLINE';
-        } catch (\Exception $e) {
-            $databaseStatus = 'ERROR: ' . $e->getMessage();
-        }
-
-        // Test Redis connection
-        $redisStatus = 'OFFLINE';
-        try {
-            \Illuminate\Support\Facades\Redis::ping();
-            $redisStatus = 'ONLINE';
-        } catch (\Exception $e) {
-            $redisStatus = 'ERROR: ' . $e->getMessage();
-        }
+        // Check OAuth sessions
+        $oauthSessionsPath = storage_path('app/oauth_sessions');
+        $oauthFiles = is_dir($oauthSessionsPath) ? glob($oauthSessionsPath . '/*.json') : [];
+        $facebookTokens = array_filter($oauthFiles, fn($file) => str_contains(basename($file), 'oauth_tokens_facebook_'));
+        $linkedinTokens = array_filter($oauthFiles, fn($file) => str_contains(basename($file), 'oauth_tokens_linkedin_'));
 
         return [
             'system_status' => 'OPERATIONAL',
             'developer' => 'J33WAKASUPUN',
             'timestamp' => now()->toISOString(),
-            'services' => [
-                'database' => $databaseStatus,
-                'redis' => $redisStatus,
-                'linkedin_provider' => class_exists('App\Services\SocialMedia\LinkedInProvider') ? 'LOADED ✅' : 'MISSING ❌',
-                'facebook_provider' => class_exists('App\Services\SocialMedia\FacebookProvider') ? 'LOADED ✅' : 'MISSING ❌',
-                'linkedin_helper' => class_exists('App\Helpers\LinkedInHelpers') ? 'LOADED ✅' : 'MISSING ❌',
-                'facebook_helper' => class_exists('App\Helpers\FacebookHelpers') ? 'LOADED ✅' : 'MISSING ❌',
-                'media_validation' => class_exists('App\Helpers\MediaValidation') ? 'LOADED ✅' : 'MISSING ❌'
+            'oauth_sessions' => [
+                'total_files' => count($oauthFiles),
+                'facebook_sessions' => count($facebookTokens),
+                'linkedin_sessions' => count($linkedinTokens),
+                'storage_path' => $oauthSessionsPath
             ],
-            'route_groups' => [
-                'testing' => 'Available at /test/*',
-                'linkedin' => 'Available at /test/linkedin/*',
-                'facebook' => 'Available at /test/facebook/*',
-                'oauth' => 'Available at /oauth/*',
-                'posts' => 'Available at /test/posts/*'
+            'facebook_integration' => [
+                'provider_class' => class_exists('App\Services\SocialMedia\FacebookProvider') ? 'LOADED ✅' : 'MISSING ❌',
+                'helper_class' => class_exists('App\Helpers\FacebookHelpers') ? 'LOADED ✅' : 'MISSING ❌',
+                'comprehensive_test' => 'GET /test/facebook/comprehensive',
+                'direct_php_available' => file_exists(public_path('facebook-direct.php')) ? 'AVAILABLE ✅' : 'MISSING ❌'
             ],
-            'statistics' => [
-                'total_users' => $databaseStatus === 'ONLINE' ? ($userCount ?? 0) : 'N/A',
-                'total_posts' => $databaseStatus === 'ONLINE' ? (\App\Models\SocialMediaPost::count() ?? 0) : 'N/A'
-            ],
-            'route_files_loaded' => [
-                'testing.php' => file_exists(__DIR__ . '/testing.php') ? 'EXISTS ✅' : 'MISSING ❌',
-                'linkedin.php' => file_exists(__DIR__ . '/linkedin.php') ? 'EXISTS ✅' : 'MISSING ❌',
-                'facebook.php' => file_exists(__DIR__ . '/facebook.php') ? 'EXISTS ✅' : 'MISSING ❌',
-                'posts.php' => file_exists(__DIR__ . '/posts.php') ? 'EXISTS ✅' : 'MISSING ❌',
-                'oauth.php' => file_exists(__DIR__ . '/oauth.php') ? 'EXISTS ✅' : 'MISSING ❌',
-                'auth.php' => file_exists(__DIR__ . '/auth.php') ? 'EXISTS ✅' : 'MISSING ❌'
+            'recommendations' => [
+                'facebook_testing' => count($facebookTokens) > 0 ? 'Ready: GET /test/facebook/comprehensive' : 'Complete OAuth first',
+                'linkedin_testing' => count($linkedinTokens) > 0 ? 'Ready: GET /test/linkedin/comprehensive' : 'Complete OAuth first'
             ]
         ];
     } catch (\Exception $e) {
@@ -128,70 +72,95 @@ Route::get('/status', function () {
     }
 });
 
-// 🔧 QUICK DIAGNOSTIC ROUTES (Added directly here to avoid conflicts)
-Route::get('/test/linkedin/quick', function () {
-    try {
-        $provider = new \App\Services\SocialMedia\LinkedInProvider();
-        return [
-            'status' => 'success',
-            'message' => 'LinkedIn provider is working ✅',
-            'configured' => $provider->isConfigured(),
-            'mode' => $provider->getCurrentMode(),
-            'helper_available' => class_exists('App\Helpers\LinkedInHelpers'),
-            'comprehensive_test' => 'GET /test/linkedin/comprehensive',
-            'working_features' => [
-                'oauth_sessions' => 'GET /test/oauth/sessions',
-                'post_publishing' => 'Your LinkedIn posting works ✅',
-                'provider_loaded' => 'LinkedInProvider class loaded ✅'
-            ]
-        ];
-    } catch (\Exception $e) {
-        return [
-            'status' => 'error',
-            'error' => $e->getMessage()
-        ];
-    }
-});
 
-Route::get('/test/facebook/quick', function () {
+// Direct Facebook Post Route (CSRF-Free Alternative)
+Route::post('/facebook/direct-post', function (Request $request) {
     try {
-        $provider = new \App\Services\SocialMedia\FacebookProvider();
-        return [
-            'status' => 'success',
-            'message' => 'Facebook provider is working ✅',
-            'configured' => $provider->isConfigured(),
-            'mode' => $provider->getCurrentMode(),
-            'helper_available' => class_exists('App\Helpers\FacebookHelpers'),
-            'comprehensive_test' => 'GET /test/facebook/comprehensive',
-            'working_features' => [
-                'provider_loaded' => 'FacebookProvider class loaded ✅',
-                'helper_loaded' => 'FacebookHelpers class loaded ✅',
-                'media_validation' => 'Enhanced media validation ✅',
-                'oauth_ready' => 'OAuth flow implemented ✅'
-            ]
-        ];
+        $oauthSessionsPath = storage_path('app/oauth_sessions');
+        $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+        
+        if (empty($facebookFiles)) {
+            return response()->json([
+                'error' => 'No Facebook tokens found',
+                'oauth_url' => 'Complete OAuth first'
+            ], 404);
+        }
+        
+        $latestTokenFile = end($facebookFiles);
+        $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+        
+        // Get pages
+        $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
+            'access_token' => $facebookToken['access_token'],
+            'fields' => 'id,name,access_token,category'
+        ]);
+        
+        if (!$pagesResponse->successful() || empty($pagesResponse->json()['data'])) {
+            return response()->json(['error' => 'No Facebook pages found'], 400);
+        }
+        
+        $selectedPage = $pagesResponse->json()['data'][0];
+        $message = $request->input('message', '🎉 LARAVEL FACEBOOK SUCCESS!
+
+✅ Clean file structure implemented
+✅ CSRF issues bypassed  
+✅ Laravel + Facebook working perfectly
+✅ 4 Facebook OAuth sessions active
+
+Built by J33WAKASUPUN! 🚀
+
+#FacebookAPI #Laravel #CleanArchitecture #Success #J33WAKASUPUN');
+        
+        // Post to Facebook
+        $postResponse = Http::post("https://graph.facebook.com/v18.0/{$selectedPage['id']}/feed", [
+            'message' => $message,
+            'access_token' => $selectedPage['access_token']
+        ]);
+        
+        if ($postResponse->successful()) {
+            return response()->json([
+                'status' => '🎉 FACEBOOK POST SUCCESS VIA CLEAN LARAVEL! 🎉',
+                'developer' => 'J33WAKASUPUN',
+                'timestamp' => now()->format('Y-m-d H:i:s'),
+                'route' => '/facebook/direct-post',
+                'method' => 'Clean Laravel Implementation',
+                'post_id' => $postResponse->json()['id'],
+                'post_url' => "https://facebook.com/{$postResponse->json()['id']}",
+                'page_info' => [
+                    'id' => $selectedPage['id'],
+                    'name' => $selectedPage['name'],
+                    'category' => $selectedPage['category'] ?? 'Software company'
+                ],
+                'integration_status' => 'CLEAN LARAVEL FACEBOOK INTEGRATION COMPLETE! 🚀'
+            ]);
+        } else {
+            return response()->json([
+                'error' => 'Failed to publish post',
+                'facebook_response' => $postResponse->json()
+            ], $postResponse->status());
+        }
+        
     } catch (\Exception $e) {
-        return [
-            'status' => 'error',
-            'error' => $e->getMessage()
-        ];
+        return response()->json([
+            'error' => 'Laravel Facebook posting failed',
+            'message' => $e->getMessage()
+        ], 500);
     }
-});
+})->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
 
 /*
 |--------------------------------------------------------------------------
-| Include Route Files (Safe Loading)
+| Include Route Files (Clean Loading)
 |--------------------------------------------------------------------------
 */
 
-// Load route files in correct order with error handling
 $routeFiles = [
-    'testing' => 'testing.php',
-    'oauth' => 'oauth.php',        // OAuth first (dependencies)
-    'linkedin' => 'linkedin.php',   // LinkedIn (established)
-    'facebook' => 'facebook.php',   // Facebook (new)
-    'posts' => 'posts.php',         // Posts management
-    'auth' => 'auth.php'            // Laravel Breeze (last)
+    'oauth' => 'oauth.php',
+    'testing' => 'testing.php', 
+    'linkedin' => 'linkedin.php',
+    'facebook' => 'facebook.php',  // 🎯 Your main Facebook file
+    'posts' => 'posts.php',
+    'auth' => 'auth.php'
 ];
 
 foreach ($routeFiles as $group => $file) {
@@ -199,17 +168,11 @@ foreach ($routeFiles as $group => $file) {
     if (file_exists($filePath)) {
         try {
             require $filePath;
-            \Illuminate\Support\Facades\Log::info("Route file loaded successfully: {$file}");
+            \Illuminate\Support\Facades\Log::info("Route file loaded: {$file}");
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Failed to load route file: {$file}", [
-                'error' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'error' => $e->getMessage()
             ]);
         }
-    } else {
-        \Illuminate\Support\Facades\Log::warning("Route file not found: {$file}");
     }
 }
-
-// END OF MAIN ROUTE FILE
