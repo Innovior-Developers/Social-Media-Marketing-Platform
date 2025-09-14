@@ -243,11 +243,16 @@ class FacebookProvider extends AbstractSocialMediaProvider
     /**
      * Get page access token for posting
      */
+    /**
+     * Get page access token for posting - FIXED ENDPOINT
+     */
     private function getPageAccessToken(Channel $channel, string $userToken): array
     {
         try {
-            // Get user's pages
-            $response = Http::get($this->getConfig('endpoints.graph_api', 'https://graph.facebook.com/v18.0') . '/me/accounts', [
+            // FIXED: Use full Graph API URL instead of config endpoint
+            $graphApiUrl = 'https://graph.facebook.com/v18.0'; // Hard-coded to prevent null issues
+
+            $response = Http::get($graphApiUrl . '/me/accounts', [
                 'access_token' => $userToken,
                 'fields' => 'id,name,access_token,category,followers_count'
             ]);
@@ -255,7 +260,8 @@ class FacebookProvider extends AbstractSocialMediaProvider
             if (!$response->successful()) {
                 Log::error('Facebook: Failed to get user pages', [
                     'status' => $response->status(),
-                    'response' => $response->body()
+                    'response' => $response->body(),
+                    'url_used' => $graphApiUrl . '/me/accounts'
                 ]);
                 return [
                     'success' => false,
@@ -326,7 +332,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'has_link' => !empty($post->content['link'])
             ]);
 
-            $response = Http::post($this->getConfig('endpoints.graph_api') . "/{$pageId}/feed", $postData);
+            $response = Http::post($this->getConfig('https://graph.facebook.com/v18.0') . "/{$pageId}/feed", $postData);
 
             if ($response->successful()) {
                 $responseData = $response->json();
@@ -405,7 +411,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
             }
 
             $response = Http::asMultipart()->post(
-                $this->getConfig('endpoints.graph_api') . "/{$pageId}/{$endpoint}",
+                $this->getConfig('https://graph.facebook.com/v18.0') . "/{$pageId}/{$endpoint}",
                 $postData
             );
 
@@ -509,7 +515,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'access_token' => $pageToken
             ];
 
-            $response = Http::post($this->getConfig('endpoints.graph_api') . "/{$pageId}/feed", $postData);
+            $response = Http::post($this->getConfig('https://graph.facebook.com/v18.0') . "/{$pageId}/feed", $postData);
 
             if ($response->successful()) {
                 $responseData = $response->json();
@@ -580,7 +586,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
 
             $endpoint = $media['type'] === 'video' ? 'videos' : 'photos';
             $response = Http::asMultipart()->post(
-                $this->getConfig('endpoints.graph_api') . "/{$pageId}/{$endpoint}",
+                $this->getConfig('https://graph.facebook.com/v18.0') . "/{$pageId}/{$endpoint}",
                 $uploadData
             );
 
@@ -605,13 +611,124 @@ class FacebookProvider extends AbstractSocialMediaProvider
         }
     }
 
+    /**
+     * Enhanced post retrieval with correct endpoint
+     */
+    private function retrievePostWithFallback(string $postId, array $pageInfo, string $fields = 'id,message,created_time,type'): array
+    {
+        $accessToken = $pageInfo['page_access_token'];
+        $pageId = $pageInfo['page_id'];
+
+        // FIXED: Use full Graph API URL
+        $graphApiUrl = 'https://graph.facebook.com/v18.0';
+
+        // Try different post ID formats
+        $postIdVariations = [
+            'original' => $postId,
+            'with_page_prefix' => $pageId . '_' . $postId,
+            'without_prefix' => str_replace($pageId . '_', '', $postId)
+        ];
+
+        Log::info('Facebook: Trying post ID variations', ['variations' => array_keys($postIdVariations)]);
+
+        foreach ($postIdVariations as $variation => $testPostId) {
+            Log::info('Facebook: Testing post ID variation', [
+                'variation' => $variation,
+                'post_id' => $testPostId
+            ]);
+
+            $response = Http::get($graphApiUrl . "/{$testPostId}", [
+                'fields' => $fields,
+                'access_token' => $accessToken
+            ]);
+
+            if ($response->successful()) {
+                Log::info('Facebook: Post found with variation', [
+                    'variation' => $variation,
+                    'post_id' => $testPostId,
+                    'actual_post_id' => $response->json()['id'] ?? 'unknown'
+                ]);
+
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                    'post_id_used' => $testPostId,
+                    'variation_used' => $variation
+                ];
+            } else {
+                Log::warning('Facebook: Post not found with variation', [
+                    'variation' => $variation,
+                    'post_id' => $testPostId,
+                    'error' => $response->json()['error'] ?? 'Unknown error'
+                ]);
+            }
+        }
+
+        // If none worked, try getting recent posts to find it
+        Log::info('Facebook: Attempting to find post in recent posts');
+
+        $recentPostsResponse = Http::get($graphApiUrl . "/{$pageId}/posts", [
+            'fields' => $fields,
+            'limit' => 10,
+            'access_token' => $accessToken
+        ]);
+
+        if ($recentPostsResponse->successful()) {
+            $posts = $recentPostsResponse->json()['data'] ?? [];
+
+            foreach ($posts as $post) {
+                $fullPostId = $post['id'];
+                $shortPostId = str_replace($pageId . '_', '', $fullPostId);
+
+                if ($shortPostId === $postId || $fullPostId === $postId) {
+                    Log::info('Facebook: Post found in recent posts', [
+                        'found_post_id' => $fullPostId,
+                        'searched_for' => $postId
+                    ]);
+
+                    return [
+                        'success' => true,
+                        'data' => $post,
+                        'post_id_used' => $fullPostId,
+                        'variation_used' => 'found_in_recent_posts'
+                    ];
+                }
+            }
+        }
+
+        return [
+            'success' => false,
+            'error' => 'Post not found with any ID variation',
+            'tried_variations' => array_keys($postIdVariations)
+        ];
+    }
+
     public function getAnalytics(string $postId, Channel $channel): array
     {
         if ($this->isStubMode()) {
             return $this->getEnhancedStubAnalytics();
         }
 
-        return $this->getRealFacebookAnalytics($postId, $channel);
+        // For real mode, acknowledge Facebook's API limitations
+        return [
+            'success' => true,
+            'limitations' => [
+                'facebook_api_restrictions' => 'Facebook severely limits analytics access via Graph API',
+                'available_alternatives' => [
+                    'facebook_insights' => 'Use Facebook Insights dashboard for detailed analytics',
+                    'facebook_business_suite' => 'Access comprehensive analytics via Facebook Business Suite',
+                    'manual_tracking' => 'Store engagement data locally when posts are created'
+                ]
+            ],
+            'basic_data' => [
+                'post_id' => $postId,
+                'facebook_url' => "https://facebook.com/{$postId}",
+                'manual_analytics_url' => "https://business.facebook.com/latest/insights",
+                'note' => 'Visit Facebook Business Suite for detailed post analytics'
+            ],
+            'stub_analytics_available' => 'Set to stub mode for development analytics',
+            'mode' => 'real'
+        ];
     }
 
     private function getRealFacebookAnalytics(string $postId, Channel $channel): array
@@ -649,7 +766,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'post_video_complete_views_30s'
             ];
 
-            $response = Http::get($this->getConfig('endpoints.graph_api') . "/{$postId}/insights", [
+            $response = Http::get($this->getConfig('https://graph.facebook.com/v18.0') . "/{$postId}/insights", [
                 'metric' => implode(',', $metrics),
                 'access_token' => $pageToken['access_token']
             ]);
@@ -781,7 +898,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
     private function getFacebookDemographics(string $postId, string $pageToken): array
     {
         try {
-            $response = Http::get($this->getConfig('endpoints.graph_api') . "/{$postId}/insights", [
+            $response = Http::get($this->getConfig('https://graph.facebook.com/v18.0') . "/{$postId}/insights", [
                 'metric' => 'post_impressions_by_age_gender,post_reach_by_age_gender',
                 'access_token' => $pageToken
             ]);
@@ -965,10 +1082,223 @@ class FacebookProvider extends AbstractSocialMediaProvider
         return [
             'pages_show_list',           // List user's pages
             'pages_read_user_content',   // Read page content  
+            'pages_read_engagement',     // Read post engagement data
             'business_management',       // Business management
             'pages_manage_metadata',     // Manage page settings
-            'pages_manage_posts'         // Still works for some apps
+            'pages_manage_posts',        // Create, update, delete posts
+            'public_profile',            // Basic profile access
+            'email'                      // Email address (optional)
         ];
+    }
+
+    /**
+     * ENHANCED: Get post with fallback mechanisms
+     */
+    public function getPost(string $postId, Channel $channel): array
+    {
+        if ($this->isStubMode()) {
+            return [
+                'success' => true,
+                'post' => [
+                    'id' => $postId,
+                    'message' => 'Stub post content for ID: ' . $postId,
+                    'created_time' => now()->subHours(2)->toISOString(),
+                    'type' => 'status'
+                ],
+                'mode' => 'stub'
+            ];
+        }
+
+        try {
+            $tokens = $channel->oauth_tokens;
+            if (is_string($tokens)) {
+                $tokens = decrypt($tokens);
+            }
+
+            // Get page access token
+            $pageToken = $this->getPageAccessToken($channel, $tokens['access_token']);
+            if (!$pageToken['success']) {
+                return [
+                    'success' => false,
+                    'error' => 'Cannot get page access token',
+                    'details' => $pageToken['error']
+                ];
+            }
+
+            $pageInfo = [
+                'page_id' => $pageToken['page_id'],
+                'page_access_token' => $pageToken['access_token']
+            ];
+
+            // Use the enhanced retrieval method
+            $result = $this->retrievePostWithFallback(
+                $postId,
+                $pageInfo,
+                'id,message,created_time,type,updated_time,permalink_url'
+            );
+
+            if ($result['success']) {
+                return [
+                    'success' => true,
+                    'post' => $result['data'],
+                    'retrieval_method' => $result['variation_used'],
+                    'mode' => 'real'
+                ];
+            }
+
+            return [
+                'success' => false,
+                'error' => 'Post not found with any retrieval method',
+                'post_id' => $postId,
+                'tried_methods' => $result['tried_variations'] ?? []
+            ];
+        } catch (\Exception $e) {
+            Log::error('Facebook: Get post failed', [
+                'post_id' => $postId,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'mode' => 'real'
+            ];
+        }
+    }
+
+    /**
+     * ENHANCED: Update post with better error handling
+     */
+    public function updatePost(string $postId, string $newContent, Channel $channel): array
+    {
+        if ($this->isStubMode()) {
+            return [
+                'success' => true,
+                'message' => 'Post updated successfully (stub mode)',
+                'post_id' => $postId,
+                'updated_at' => now()->toISOString(),
+                'mode' => 'stub'
+            ];
+        }
+
+        try {
+            $tokens = $channel->oauth_tokens;
+            if (is_string($tokens)) {
+                $tokens = decrypt($tokens);
+            }
+
+            // Get page access token
+            $pageToken = $this->getPageAccessToken($channel, $tokens['access_token']);
+            if (!$pageToken['success']) {
+                return [
+                    'success' => false,
+                    'error' => 'Cannot get page access token for update'
+                ];
+            }
+
+            // Try different post ID formats for update
+            $postIdVariations = [
+                'original' => $postId,
+                'with_page_prefix' => $pageToken['page_id'] . '_' . $postId,
+                'without_prefix' => str_replace($pageToken['page_id'] . '_', '', $postId)
+            ];
+
+            foreach ($postIdVariations as $variation => $testPostId) {
+                $updateData = [
+                    'message' => $newContent,
+                    'access_token' => $pageToken['access_token']
+                ];
+
+                $response = Http::post($this->getConfig('https://graph.facebook.com/v18.0') . "/{$testPostId}", $updateData);
+
+                if ($response->successful()) {
+                    Log::info('Facebook: Post updated successfully', [
+                        'post_id' => $testPostId,
+                        'variation_used' => $variation
+                    ]);
+
+                    return [
+                        'success' => true,
+                        'message' => 'Post updated successfully',
+                        'post_id' => $testPostId,
+                        'original_post_id' => $postId,
+                        'variation_used' => $variation,
+                        'updated_at' => now()->toISOString(),
+                        'mode' => 'real'
+                    ];
+                }
+            }
+
+            return [
+                'success' => false,
+                'error' => 'Failed to update post with any ID variation',
+                'post_id' => $postId,
+                'tried_variations' => array_keys($postIdVariations)
+            ];
+        } catch (\Exception $e) {
+            Log::error('Facebook: Update post failed', [
+                'post_id' => $postId,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * ENHANCED: Check if we have all required permissions
+     */
+    public function checkPermissions(Channel $channel): array
+    {
+        try {
+            $tokens = $channel->oauth_tokens;
+            if (is_string($tokens)) {
+                $tokens = decrypt($tokens);
+            }
+
+            $response = Http::get('https://graph.facebook.com/v18.0/me/permissions', [
+                'access_token' => $tokens['access_token']
+            ]);
+
+            if (!$response->successful()) {
+                return [
+                    'success' => false,
+                    'error' => 'Failed to check permissions'
+                ];
+            }
+
+            $permissions = $response->json()['data'] ?? [];
+            $granted = [];
+            $declined = [];
+
+            foreach ($permissions as $perm) {
+                if ($perm['status'] === 'granted') {
+                    $granted[] = $perm['permission'];
+                } else {
+                    $declined[] = $perm['permission'];
+                }
+            }
+
+            $requiredPermissions = $this->getDefaultScopes();
+            $missing = array_diff($requiredPermissions, $granted);
+
+            return [
+                'success' => true,
+                'granted_permissions' => $granted,
+                'declined_permissions' => $declined,
+                'required_permissions' => $requiredPermissions,
+                'missing_permissions' => $missing,
+                'all_required_granted' => empty($missing)
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
     }
 
     public function getCurrentMode(): string
@@ -1039,7 +1369,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 'graph_version' => $this->getConfig('graph_version') ?? 'v18.0',
                 'auth_url' => $this->getConfig('endpoints.auth_url') ?? 'NOT SET',
                 'token_url' => $this->getConfig('endpoints.token_url') ?? 'NOT SET',
-                'graph_api' => $this->getConfig('endpoints.graph_api') ?? 'NOT SET',
+                'graph_api' => $this->getConfig('https://graph.facebook.com/v18.0') ?? 'NOT SET',
             ],
             'scopes' => $this->getDefaultScopes(),
             'constraints' => [
@@ -1079,18 +1409,6 @@ class FacebookProvider extends AbstractSocialMediaProvider
                                 'url' => 'https://graph.facebook.com/page_id/picture'
                             ]
                         ]
-                    ],
-                    [
-                        'id' => 'page_' . rand(100000000000000, 999999999999999),
-                        'name' => 'Another Facebook Page',
-                        'category' => 'Community',
-                        'followers_count' => rand(50, 5000),
-                        'access_token' => 'page_token_' . uniqid(),
-                        'picture' => [
-                            'data' => [
-                                'url' => 'https://graph.facebook.com/page_id/picture'
-                            ]
-                        ]
                     ]
                 ],
                 'mode' => 'stub'
@@ -1103,7 +1421,10 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 $tokens = decrypt($tokens);
             }
 
-            $response = Http::get($this->getConfig('endpoints.graph_api') . '/me/accounts', [
+            // FIXED: Use full Graph API URL
+            $graphApiUrl = 'https://graph.facebook.com/v18.0';
+
+            $response = Http::get($graphApiUrl . '/me/accounts', [
                 'access_token' => $tokens['access_token'],
                 'fields' => 'id,name,access_token,category,followers_count,picture'
             ]);
@@ -1171,8 +1492,8 @@ class FacebookProvider extends AbstractSocialMediaProvider
             }
 
             // Get page access token
-            $pageToken = $this->getPageAccessToken($channel, $tokens['access_token']);
-            if (!$pageToken['success']) {
+            $pageTokenResponse = $this->getPageAccessToken($channel, $tokens['access_token']);
+            if (!$pageTokenResponse['success']) {
                 return [
                     'success' => false,
                     'exists' => 'unknown',
@@ -1180,28 +1501,30 @@ class FacebookProvider extends AbstractSocialMediaProvider
                 ];
             }
 
-            Log::info('Facebook: Checking if post exists', [
+            $pageInfo = [
+                'page_id' => $pageTokenResponse['page_id'],
+                'page_access_token' => $pageTokenResponse['access_token']
+            ];
+
+            Log::info('Facebook: Checking if post exists with fallback', [
                 'post_id' => $postId
             ]);
 
-            $response = Http::get($this->getConfig('endpoints.graph_api') . "/{$postId}", [
-                'access_token' => $pageToken['access_token'],
-                'fields' => 'id,created_time,message'
-            ]);
+            $postResult = $this->retrievePostWithFallback($postId, $pageInfo, 'id');
 
-            $exists = $response->successful();
+            $exists = $postResult['success'];
 
             Log::info('Facebook: Post existence check result', [
                 'post_id' => $postId,
                 'exists' => $exists,
-                'status_code' => $response->status()
+                'variation_used' => $postResult['variation_used'] ?? 'none'
             ]);
 
             return [
                 'success' => true,
                 'exists' => $exists,
                 'post_id' => $postId,
-                'status_code' => $response->status(),
+                'resolved_post_id' => $postResult['post_id_used'] ?? null,
                 'checked_at' => now()->toISOString(),
                 'mode' => 'real'
             ];
@@ -1279,7 +1602,7 @@ class FacebookProvider extends AbstractSocialMediaProvider
             }
 
             // Attempt to delete post
-            $response = Http::delete($this->getConfig('endpoints.graph_api') . "/{$postId}", [
+            $response = Http::delete($this->getConfig('https://graph.facebook.com/v18.0') . "/{$postId}", [
                 'access_token' => $pageToken['access_token']
             ]);
 
@@ -1422,5 +1745,94 @@ class FacebookProvider extends AbstractSocialMediaProvider
         }
 
         return $formatted;
+    }
+
+    /**
+     * OPTIMIZED: Get post with realistic Facebook API limitations
+     */
+    public function getPostDetails(string $postId, Channel $channel): array
+    {
+        if ($this->isStubMode()) {
+            return [
+                'success' => true,
+                'post' => [
+                    'id' => $postId,
+                    'message' => 'Full post content available in stub mode',
+                    'created_time' => now()->subHours(2)->toISOString(),
+                    'type' => 'status',
+                    'engagement' => [
+                        'likes' => rand(10, 100),
+                        'comments' => rand(5, 50),
+                        'shares' => rand(1, 20)
+                    ]
+                ],
+                'mode' => 'stub'
+            ];
+        }
+
+        try {
+            $tokens = $channel->oauth_tokens;
+            if (is_string($tokens)) {
+                $tokens = decrypt($tokens);
+            }
+
+            // Get page access token
+            $pageToken = $this->getPageAccessToken($channel, $tokens['access_token']);
+            if (!$pageToken['success']) {
+                return [
+                    'success' => false,
+                    'error' => 'Cannot get page access token'
+                ];
+            }
+
+            $pageInfo = [
+                'page_id' => $pageToken['page_id'],
+                'page_access_token' => $pageToken['access_token']
+            ];
+
+            // Use minimal fields that work with current Facebook API
+            $result = $this->retrievePostWithFallback(
+                $postId,
+                $pageInfo,
+                'id,created_time' // Only fields that consistently work
+            );
+
+            if ($result['success']) {
+                return [
+                    'success' => true,
+                    'post' => [
+                        'id' => $result['data']['id'],
+                        'created_time' => $result['data']['created_time'] ?? null,
+                        'facebook_url' => "https://facebook.com/{$result['data']['id']}",
+                        'api_limitations' => [
+                            'message_content' => 'Not available due to Facebook API restrictions',
+                            'engagement_data' => 'Use Facebook Insights for detailed analytics',
+                            'available_data' => 'Basic metadata only'
+                        ]
+                    ],
+                    'retrieval_method' => $result['variation_used'],
+                    'mode' => 'real'
+                ];
+            }
+
+            return [
+                'success' => false,
+                'error' => 'Post not found with any retrieval method',
+                'facebook_url' => "https://facebook.com/{$postId}",
+                'manual_access' => 'Use the facebook_url to view post directly'
+            ];
+        } catch (\Exception $e) {
+            Log::error('Facebook: Get post details failed', [
+                'post_id' => $postId,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'facebook_url' => "https://facebook.com/{$postId}",
+                'mode' => 'real'
+            ];
+        }
     }
 }

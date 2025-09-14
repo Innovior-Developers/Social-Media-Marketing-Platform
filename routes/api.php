@@ -3,6 +3,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Http;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\SocialMediaPostController;
@@ -125,6 +126,512 @@ Route::prefix('v1')->group(function () {
         });
 
         // ============================================
+        // 📘 FACEBOOK INTEGRATION ENDPOINTS
+        // ============================================
+        Route::prefix('facebook')->group(function () {
+            
+            // Facebook OAuth & Authentication
+            Route::prefix('auth')->group(function () {
+                Route::get('/url', function () {
+                    try {
+                        $provider = new \App\Services\SocialMedia\FacebookProvider();
+                        $state = 'facebook_api_' . auth('sanctum')->id() . '_' . time();
+                        $authUrl = $provider->getAuthUrl($state);
+                        
+                        return response()->json([
+                            'success' => true,
+                            'auth_url' => $authUrl,
+                            'state' => $state,
+                            'instructions' => [
+                                'Copy the auth_url and open in browser',
+                                'Complete Facebook OAuth authorization',
+                                'Return to app to continue'
+                            ]
+                        ]);
+                    } catch (\Exception $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => $e->getMessage()
+                        ], 500);
+                    }
+                });
+                
+                Route::get('/status', function () {
+                    try {
+                        // Check if user has Facebook tokens
+                        $oauthSessionsPath = storage_path('app/oauth_sessions');
+                        $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+                        
+                        $hasAuth = !empty($facebookFiles);
+                        $tokenCount = count($facebookFiles);
+                        
+                        if ($hasAuth) {
+                            $latestTokenFile = end($facebookFiles);
+                            $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+                            
+                            return response()->json([
+                                'success' => true,
+                                'authenticated' => true,
+                                'token_count' => $tokenCount,
+                                'expires_at' => $facebookToken['expires_at'] ?? null,
+                                'scopes' => $facebookToken['scopes'] ?? [],
+                                'mode' => $facebookToken['mode'] ?? 'real'
+                            ]);
+                        }
+                        
+                        return response()->json([
+                            'success' => true,
+                            'authenticated' => false,
+                            'message' => 'No Facebook authentication found',
+                            'auth_url_endpoint' => '/api/v1/facebook/auth/url'
+                        ]);
+                        
+                    } catch (\Exception $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => $e->getMessage()
+                        ], 500);
+                    }
+                });
+            });
+            
+            // Facebook Pages Management
+            Route::prefix('pages')->group(function () {
+                Route::get('/', function () {
+                    try {
+                        $oauthSessionsPath = storage_path('app/oauth_sessions');
+                        $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+                        
+                        if (empty($facebookFiles)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No Facebook authentication found',
+                                'auth_required' => true
+                            ], 401);
+                        }
+                        
+                        $latestTokenFile = end($facebookFiles);
+                        $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+                        
+                        $response = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
+                            'access_token' => $facebookToken['access_token'],
+                            'fields' => 'id,name,category,followers_count,picture,access_token'
+                        ]);
+                        
+                        if ($response->successful()) {
+                            $pages = $response->json()['data'] ?? [];
+                            
+                            return response()->json([
+                                'success' => true,
+                                'pages' => $pages,
+                                'total_pages' => count($pages)
+                            ]);
+                        }
+                        
+                        return response()->json([
+                            'success' => false,
+                            'error' => 'Failed to fetch Facebook pages',
+                            'facebook_error' => $response->json()
+                        ], 400);
+                        
+                    } catch (\Exception $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => $e->getMessage()
+                        ], 500);
+                    }
+                });
+            });
+            
+            // Facebook Posts Management
+            Route::prefix('posts')->group(function () {
+                
+                // Get posts for dashboard display
+                Route::get('/dashboard', function () {
+                    try {
+                        $oauthSessionsPath = storage_path('app/oauth_sessions');
+                        $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+                        
+                        if (empty($facebookFiles)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No Facebook authentication',
+                                'auth_required' => true
+                            ], 401);
+                        }
+                        
+                        $latestTokenFile = end($facebookFiles);
+                        $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+                        
+                        // Get pages
+                        $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
+                            'access_token' => $facebookToken['access_token'],
+                            'fields' => 'id,name,access_token,picture'
+                        ]);
+                        
+                        if (!$pagesResponse->successful()) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'Failed to get Facebook pages'
+                            ], 400);
+                        }
+                        
+                        $pages = $pagesResponse->json()['data'] ?? [];
+                        if (empty($pages)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No Facebook pages found'
+                            ], 404);
+                        }
+                        
+                        $selectedPage = $pages[0];
+                        $pageAccessToken = $selectedPage['access_token'];
+                        $pageId = $selectedPage['id'];
+                        
+                        // Get recent posts
+                        $postsResponse = Http::get("https://graph.facebook.com/v18.0/{$pageId}/posts", [
+                            'fields' => 'id,created_time,type',
+                            'limit' => 20,
+                            'access_token' => $pageAccessToken
+                        ]);
+                        
+                        if (!$postsResponse->successful()) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'Failed to get Facebook posts'
+                            ], 400);
+                        }
+                        
+                        $posts = $postsResponse->json()['data'] ?? [];
+                        
+                        // Transform posts for frontend
+                        $dashboardPosts = array_map(function($post) use ($selectedPage) {
+                            $postId = $post['id'];
+                            $facebookUrl = "https://facebook.com/{$postId}";
+                            
+                            return [
+                                'id' => $postId,
+                                'platform' => 'facebook',
+                                'created_at' => $post['created_time'],
+                                'type' => $post['type'] ?? 'status',
+                                'page_info' => [
+                                    'id' => $selectedPage['id'],
+                                    'name' => $selectedPage['name'],
+                                    'picture' => $selectedPage['picture']['data']['url'] ?? null
+                                ],
+                                'urls' => [
+                                    'direct_link' => $facebookUrl,
+                                    'embed_url' => "https://www.facebook.com/plugins/post.php?" . http_build_query([
+                                        'href' => $facebookUrl,
+                                        'width' => '500',
+                                        'show_text' => 'true'
+                                    ]),
+                                    'mobile_link' => "fb://post/{$postId}"
+                                ],
+                                'display_data' => [
+                                    'title' => 'Facebook Post',
+                                    'subtitle' => $selectedPage['name'],
+                                    'timestamp' => $post['created_time'],
+                                    'platform_icon' => '📘',
+                                    'platform_color' => '#1877f2'
+                                ]
+                            ];
+                        }, $posts);
+                        
+                        return response()->json([
+                            'success' => true,
+                            'data' => [
+                                'posts' => $dashboardPosts,
+                                'pagination' => [
+                                    'total' => count($dashboardPosts),
+                                    'current_page' => 1,
+                                    'per_page' => 20,
+                                    'has_more' => count($posts) >= 20
+                                ],
+                                'page_info' => [
+                                    'name' => $selectedPage['name'],
+                                    'id' => $selectedPage['id'],
+                                    'picture' => $selectedPage['picture']['data']['url'] ?? null
+                                ]
+                            ]
+                        ]);
+                        
+                    } catch (\Exception $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => $e->getMessage()
+                        ], 500);
+                    }
+                });
+                
+                // Get specific post display data
+                Route::get('/{postId}/display-data', function ($postId) {
+                    try {
+                        $oauthSessionsPath = storage_path('app/oauth_sessions');
+                        $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+                        
+                        if (empty($facebookFiles)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No Facebook authentication',
+                                'fallback' => [
+                                    'direct_link' => "https://facebook.com/{$postId}",
+                                    'display_text' => 'View Post on Facebook'
+                                ]
+                            ], 401);
+                        }
+                        
+                        $latestTokenFile = end($facebookFiles);
+                        $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+                        
+                        // Get page info
+                        $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
+                            'access_token' => $facebookToken['access_token'],
+                            'fields' => 'id,name,access_token,picture'
+                        ]);
+                        
+                        if (!$pagesResponse->successful()) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'Failed to get page info',
+                                'fallback' => [
+                                    'direct_link' => "https://facebook.com/{$postId}"
+                                ]
+                            ], 400);
+                        }
+                        
+                        $pages = $pagesResponse->json()['data'] ?? [];
+                        if (empty($pages)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No pages found',
+                                'fallback' => [
+                                    'direct_link' => "https://facebook.com/{$postId}"
+                                ]
+                            ], 404);
+                        }
+                        
+                        $selectedPage = $pages[0];
+                        $pageAccessToken = $selectedPage['access_token'];
+                        
+                        // Try to get minimal post data
+                        $postResponse = Http::get("https://graph.facebook.com/v18.0/{$postId}", [
+                            'fields' => 'id,created_time,type',
+                            'access_token' => $pageAccessToken
+                        ]);
+                        
+                        // Generate Facebook URLs
+                        $facebookPostUrl = "https://facebook.com/{$postId}";
+                        $facebookEmbedUrl = "https://www.facebook.com/plugins/post.php?" . http_build_query([
+                            'href' => $facebookPostUrl,
+                            'width' => '500',
+                            'show_text' => 'true'
+                        ]);
+                        
+                        // Create frontend-optimized response
+                        $displayData = [
+                            'success' => true,
+                            'data' => [
+                                'post_id' => $postId,
+                                'created_at' => $postResponse->successful() ? 
+                                    ($postResponse->json()['created_time'] ?? now()->toISOString()) : 
+                                    now()->toISOString(),
+                                'type' => $postResponse->successful() ? 
+                                    ($postResponse->json()['type'] ?? 'status') : 
+                                    'status',
+                                'platform' => 'facebook',
+                                'page_info' => [
+                                    'id' => $selectedPage['id'],
+                                    'name' => $selectedPage['name'],
+                                    'picture' => $selectedPage['picture']['data']['url'] ?? null
+                                ],
+                                'urls' => [
+                                    'direct_link' => $facebookPostUrl,
+                                    'embed_iframe' => $facebookEmbedUrl,
+                                    'mobile_link' => "fb://post/{$postId}"
+                                ],
+                                'display_options' => [
+                                    'embedded_post' => [
+                                        'method' => 'iframe',
+                                        'url' => $facebookEmbedUrl,
+                                        'width' => '100%',
+                                        'height' => 'auto',
+                                        'recommended' => true
+                                    ],
+                                    'preview_card' => [
+                                        'method' => 'custom_card',
+                                        'title' => 'Facebook Post',
+                                        'description' => "Post from {$selectedPage['name']}",
+                                        'thumbnail' => $selectedPage['picture']['data']['url'] ?? null,
+                                        'click_action' => 'open_facebook_url'
+                                    ],
+                                    'direct_button' => [
+                                        'method' => 'link_button',
+                                        'text' => 'View on Facebook',
+                                        'url' => $facebookPostUrl,
+                                        'target' => '_blank'
+                                    ]
+                                ],
+                                'api_limitations' => [
+                                    'content_preview' => 'Use Facebook embed for full content',
+                                    'engagement_metrics' => 'Available only in Facebook Business Suite',
+                                    'recommendation' => 'Use embedded Facebook post for best user experience'
+                                ]
+                            ]
+                        ];
+                        
+                        return response()->json($displayData);
+                        
+                    } catch (\Exception $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => $e->getMessage(),
+                            'fallback' => [
+                                'direct_link' => "https://facebook.com/{$postId}",
+                                'display_text' => 'View Post on Facebook'
+                            ]
+                        ], 500);
+                    }
+                });
+                
+                // Create new Facebook post
+                Route::post('/create', function (Request $request) {
+                    try {
+                        $request->validate([
+                            'message' => 'required|string|max:63206',
+                            'link' => 'nullable|url',
+                            'media' => 'nullable|array',
+                            'media.*' => 'file|mimes:jpg,jpeg,png,gif,mp4,mov|max:102400' // 100MB
+                        ]);
+                        
+                        $oauthSessionsPath = storage_path('app/oauth_sessions');
+                        $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
+                        
+                        if (empty($facebookFiles)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No Facebook authentication found'
+                            ], 401);
+                        }
+                        
+                        $latestTokenFile = end($facebookFiles);
+                        $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
+                        
+                        // Get page access token
+                        $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
+                            'access_token' => $facebookToken['access_token'],
+                            'fields' => 'id,name,access_token'
+                        ]);
+                        
+                        if (!$pagesResponse->successful()) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'Failed to get Facebook pages'
+                            ], 400);
+                        }
+                        
+                        $pages = $pagesResponse->json()['data'] ?? [];
+                        if (empty($pages)) {
+                            return response()->json([
+                                'success' => false,
+                                'error' => 'No Facebook pages found'
+                            ], 404);
+                        }
+                        
+                        $selectedPage = $pages[0];
+                        $pageAccessToken = $selectedPage['access_token'];
+                        $pageId = $selectedPage['id'];
+                        
+                        // Create post data
+                        $postData = [
+                            'message' => $request->input('message'),
+                            'access_token' => $pageAccessToken
+                        ];
+                        
+                        // Add link if provided
+                        if ($request->has('link')) {
+                            $postData['link'] = $request->input('link');
+                        }
+                        
+                        // Post to Facebook
+                        $response = Http::post("https://graph.facebook.com/v18.0/{$pageId}/feed", $postData);
+                        
+                        if ($response->successful()) {
+                            $postResponse = $response->json();
+                            $newPostId = $postResponse['id'];
+                            
+                            return response()->json([
+                                'success' => true,
+                                'data' => [
+                                    'post_id' => $newPostId,
+                                    'facebook_url' => "https://facebook.com/{$newPostId}",
+                                    'page_name' => $selectedPage['name'],
+                                    'created_at' => now()->toISOString(),
+                                    'message' => 'Post created successfully on Facebook'
+                                ]
+                            ]);
+                        }
+                        
+                        return response()->json([
+                            'success' => false,
+                            'error' => 'Failed to create Facebook post',
+                            'facebook_error' => $response->json()
+                        ], 400);
+                        
+                    } catch (\Illuminate\Validation\ValidationException $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => 'Validation failed',
+                            'validation_errors' => $e->errors()
+                        ], 422);
+                    } catch (\Exception $e) {
+                        return response()->json([
+                            'success' => false,
+                            'error' => $e->getMessage()
+                        ], 500);
+                    }
+                });
+            });
+            
+            // Facebook Analytics (Limited due to API restrictions)
+            Route::prefix('analytics')->group(function () {
+                Route::get('/limitations', function () {
+                    return response()->json([
+                        'success' => true,
+                        'facebook_analytics_status' => [
+                            'api_limitations' => [
+                                'message' => 'Facebook severely limits analytics access via Graph API',
+                                'content_access' => 'Post content requires app review',
+                                'engagement_data' => 'Detailed metrics require business verification'
+                            ],
+                            'available_alternatives' => [
+                                [
+                                    'name' => 'Facebook Insights',
+                                    'url' => 'https://www.facebook.com/insights',
+                                    'description' => 'Official Facebook analytics dashboard'
+                                ],
+                                [
+                                    'name' => 'Facebook Business Suite',
+                                    'url' => 'https://business.facebook.com/latest/insights',
+                                    'description' => 'Comprehensive business analytics'
+                                ],
+                                [
+                                    'name' => 'Meta Business API',
+                                    'url' => 'https://developers.facebook.com/docs/marketing-api/insights',
+                                    'description' => 'Advanced API for verified businesses'
+                                ]
+                            ],
+                            'development_solution' => [
+                                'stub_mode' => 'Enable stub mode for development analytics',
+                                'endpoint' => 'Switch Facebook provider to stub mode'
+                            ]
+                        ]
+                    ]);
+                });
+            });
+        });
+
+        // ============================================
         // 📅 CONTENT CALENDAR (Future Enhancement)
         // ============================================
         Route::prefix('calendar')->group(function () {
@@ -216,6 +723,15 @@ Route::get('/docs', function () {
                 'POST /posts' => 'Create post',
                 'GET /posts/{id}' => 'Get post details',
                 'POST /posts/{id}/publish' => 'Publish post'
+            ],
+            'Facebook Integration' => [
+                'GET /facebook/auth/url' => 'Get Facebook OAuth URL',
+                'GET /facebook/auth/status' => 'Check Facebook auth status',
+                'GET /facebook/pages' => 'List Facebook pages',
+                'GET /facebook/posts/dashboard' => 'Get Facebook posts for dashboard',
+                'GET /facebook/posts/{id}/display-data' => 'Get post display data',
+                'POST /facebook/posts/create' => 'Create Facebook post',
+                'GET /facebook/analytics/limitations' => 'Facebook analytics info'
             ],
             'Analytics' => [
                 'GET /analytics/overview' => 'Get analytics overview',
