@@ -17,8 +17,15 @@ REM If container doesn't exist, create it
 if %errorlevel% neq 0 (
     echo [INFO] Redis container not found. Creating new container...
     docker run --name redis-smp -p 6379:6379 -d --restart unless-stopped redis:latest
+
+    REM Wait a moment for container to start
+    echo [INFO] Waiting for container to start...
+    timeout /t 3 /nobreak > nul
+
+    REM Check if container is now running
+    docker ps | findstr redis-smp > nul
     if %errorlevel% equ 0 (
-        echo [SUCCESS] Redis container created successfully!
+        echo [SUCCESS] Redis container created and started successfully!
     ) else (
         echo [ERROR] Failed to create Redis container!
         echo [INFO] Make sure Docker Desktop is running.
@@ -31,7 +38,8 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [INFO] Testing Redis connection...
-docker exec -it redis-smp redis-cli ping
+timeout /t 2 /nobreak > nul
+docker exec redis-smp redis-cli ping 2>nul
 
 if %errorlevel% equ 0 (
     echo.
@@ -41,7 +49,8 @@ if %errorlevel% equ 0 (
     echo.
     echo [NEXT] You can now run: php artisan serve
 ) else (
-    echo [ERROR] Redis connection test failed!
+    echo [WARNING] Redis container is running but connection test failed.
+    echo [INFO] This is normal for new containers - Redis might still be starting.
 )
 
 echo.

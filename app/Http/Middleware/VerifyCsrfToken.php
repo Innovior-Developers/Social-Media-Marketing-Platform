@@ -12,7 +12,7 @@ class VerifyCsrfToken
      */
     public function handle(Request $request, Closure $next)
     {
-        // 🔥 NUCLEAR OPTION: Skip all CSRF verification entirely
+        // Skip all CSRF verification entirely
         return $next($request);
     }
 }
