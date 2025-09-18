@@ -46,7 +46,7 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
         'password' => 'hashed',
         // Remove these array casts - MongoDB handles them natively:
         // 'profile' => 'array',
-        // 'social_accounts' => 'array', 
+        // 'social_accounts' => 'array',
         // 'preferences' => 'array',
         // 'subscription' => 'array',
         // 'api_limits' => 'array',
@@ -305,6 +305,27 @@ class User extends Authenticatable implements AuthenticatableContract, Authoriza
     /**
      * Relationships
      */
+
+    public function ownedOrganizations()
+    {
+        return $this->hasMany(Organization::class, 'owner_id');
+    }
+
+    public function organizations()
+    {
+        return $this->belongsToMany(Organization::class, null, 'user_id', 'organization_id')
+            ->using(Membership::class);
+    }
+
+    public function memberships()
+    {
+        return $this->hasMany(Membership::class);
+    }
+
+    public function brands()
+    {
+        return $this->hasManyThrough(Brand::class, Membership::class, 'user_id', '_id', '_id', 'brand_id');
+    }
     public function posts()
     {
         return $this->hasMany(SocialMediaPost::class);

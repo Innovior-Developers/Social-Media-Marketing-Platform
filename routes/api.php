@@ -31,16 +31,16 @@ Route::get('/health', function () {
 
 // API Version 1 Routes
 Route::prefix('v1')->group(function () {
-    
+
     // ============================================
     // 🔐 AUTHENTICATION ROUTES (PUBLIC)
     // ============================================
     Route::prefix('auth')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
         Route::post('/login', [AuthController::class, 'login']);
-        
+
         // Protected auth routes
-        Route::middleware('auth:sanctum')->group(function () {
+        Route::middleware('mongo.auth')->group(function () {
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/logout-all', [AuthController::class, 'logoutAll']);
             Route::post('/refresh', [AuthController::class, 'refresh']);
@@ -53,8 +53,8 @@ Route::prefix('v1')->group(function () {
     // ============================================
     // 🔒 PROTECTED ROUTES (REQUIRE AUTHENTICATION)
     // ============================================
-    Route::middleware('auth:sanctum')->group(function () {
-        
+    Route::middleware('mongo.auth')->group(function () {
+
         // ============================================
         // 👤 USER MANAGEMENT
         // ============================================
@@ -63,7 +63,7 @@ Route::prefix('v1')->group(function () {
             Route::put('/profile', [UserController::class, 'updateProfile']);
             Route::post('/change-password', [UserController::class, 'changePassword']);
             Route::get('/dashboard', [UserController::class, 'dashboard']);
-            
+
             // Social Account Management
             Route::get('/social-accounts', [UserController::class, 'socialAccounts']);
             Route::post('/social-accounts', [UserController::class, 'connectSocialAccount'])
@@ -75,14 +75,14 @@ Route::prefix('v1')->group(function () {
         // 🏢 ORGANIZATION MANAGEMENT
         // ============================================
         Route::apiResource('organizations', OrganizationController::class);
-        Route::post('organizations/{id}/features', [OrganizationController::class, 'addFeature'])
+        Route::post('organizations/{organization}/features', [OrganizationController::class, 'addFeature'])
             ->middleware('permission:manage organizations');
 
         // ============================================
         // 🏷️ BRAND MANAGEMENT
         // ============================================
         Route::apiResource('brands', BrandController::class);
-        Route::post('brands/{id}/branding', [BrandController::class, 'updateBranding'])
+        Route::post('brands/{brand}/branding', [BrandController::class, 'updateBranding'])
             ->middleware('permission:manage_brand');
 
         // ============================================
@@ -97,9 +97,9 @@ Route::prefix('v1')->group(function () {
         // ============================================
         Route::apiResource('channels', ChannelController::class);
         Route::get('channels/providers', [ChannelController::class, 'providers']);
-        Route::post('channels/{id}/connect', [ChannelController::class, 'connect']);
-        Route::post('channels/{id}/disconnect', [ChannelController::class, 'disconnect']);
-        Route::post('channels/{id}/sync', [ChannelController::class, 'sync']);
+        Route::post('channels/{channel}/connect', [ChannelController::class, 'connect']);
+        Route::post('channels/{channel}/disconnect', [ChannelController::class, 'disconnect']);
+        Route::post('channels/{channel}/sync', [ChannelController::class, 'sync']);
 
         // ============================================
         // 📝 SOCIAL MEDIA POSTS
@@ -107,11 +107,11 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('posts', SocialMediaPostController::class);
         Route::post('posts', [SocialMediaPostController::class, 'store'])
             ->middleware('subscription:posts');
-        Route::post('posts/{id}/publish', [SocialMediaPostController::class, 'publish'])
+        Route::post('posts/{post}/publish', [SocialMediaPostController::class, 'publish'])
             ->middleware('permission:create_posts');
-        Route::post('posts/{id}/duplicate', [SocialMediaPostController::class, 'duplicate'])
+        Route::post('posts/{post}/duplicate', [SocialMediaPostController::class, 'duplicate'])
             ->middleware('subscription:posts');
-        Route::get('posts/{id}/analytics', [SocialMediaPostController::class, 'analytics'])
+        Route::get('posts/{post}/analytics', [SocialMediaPostController::class, 'analytics'])
             ->middleware('permission:view_analytics');
 
         // ============================================
@@ -129,15 +129,15 @@ Route::prefix('v1')->group(function () {
         // 📘 FACEBOOK INTEGRATION ENDPOINTS
         // ============================================
         Route::prefix('facebook')->group(function () {
-            
+
             // Facebook OAuth & Authentication
             Route::prefix('auth')->group(function () {
                 Route::get('/url', function () {
                     try {
                         $provider = new \App\Services\SocialMedia\FacebookProvider();
-                        $state = 'facebook_api_' . auth('sanctum')->id() . '_' . time();
+                        $state = 'facebook_api_' . auth()->id() . '_' . time();
                         $authUrl = $provider->getAuthUrl($state);
-                        
+
                         return response()->json([
                             'success' => true,
                             'auth_url' => $authUrl,
@@ -155,20 +155,20 @@ Route::prefix('v1')->group(function () {
                         ], 500);
                     }
                 });
-                
+
                 Route::get('/status', function () {
                     try {
                         // Check if user has Facebook tokens
                         $oauthSessionsPath = storage_path('app/oauth_sessions');
                         $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
-                        
+
                         $hasAuth = !empty($facebookFiles);
                         $tokenCount = count($facebookFiles);
-                        
+
                         if ($hasAuth) {
                             $latestTokenFile = end($facebookFiles);
                             $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
-                            
+
                             return response()->json([
                                 'success' => true,
                                 'authenticated' => true,
@@ -178,14 +178,13 @@ Route::prefix('v1')->group(function () {
                                 'mode' => $facebookToken['mode'] ?? 'real'
                             ]);
                         }
-                        
+
                         return response()->json([
                             'success' => true,
                             'authenticated' => false,
                             'message' => 'No Facebook authentication found',
                             'auth_url_endpoint' => '/api/v1/facebook/auth/url'
                         ]);
-                        
                     } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
@@ -194,14 +193,14 @@ Route::prefix('v1')->group(function () {
                     }
                 });
             });
-            
+
             // Facebook Pages Management
             Route::prefix('pages')->group(function () {
                 Route::get('/', function () {
                     try {
                         $oauthSessionsPath = storage_path('app/oauth_sessions');
                         $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
-                        
+
                         if (empty($facebookFiles)) {
                             return response()->json([
                                 'success' => false,
@@ -209,31 +208,30 @@ Route::prefix('v1')->group(function () {
                                 'auth_required' => true
                             ], 401);
                         }
-                        
+
                         $latestTokenFile = end($facebookFiles);
                         $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
-                        
+
                         $response = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
                             'access_token' => $facebookToken['access_token'],
                             'fields' => 'id,name,category,followers_count,picture,access_token'
                         ]);
-                        
+
                         if ($response->successful()) {
                             $pages = $response->json()['data'] ?? [];
-                            
+
                             return response()->json([
                                 'success' => true,
                                 'pages' => $pages,
                                 'total_pages' => count($pages)
                             ]);
                         }
-                        
+
                         return response()->json([
                             'success' => false,
                             'error' => 'Failed to fetch Facebook pages',
                             'facebook_error' => $response->json()
                         ], 400);
-                        
                     } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
@@ -242,16 +240,16 @@ Route::prefix('v1')->group(function () {
                     }
                 });
             });
-            
+
             // Facebook Posts Management
             Route::prefix('posts')->group(function () {
-                
+
                 // Get posts for dashboard display
                 Route::get('/dashboard', function () {
                     try {
                         $oauthSessionsPath = storage_path('app/oauth_sessions');
                         $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
-                        
+
                         if (empty($facebookFiles)) {
                             return response()->json([
                                 'success' => false,
@@ -259,23 +257,23 @@ Route::prefix('v1')->group(function () {
                                 'auth_required' => true
                             ], 401);
                         }
-                        
+
                         $latestTokenFile = end($facebookFiles);
                         $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
-                        
+
                         // Get pages
                         $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
                             'access_token' => $facebookToken['access_token'],
                             'fields' => 'id,name,access_token,picture'
                         ]);
-                        
+
                         if (!$pagesResponse->successful()) {
                             return response()->json([
                                 'success' => false,
                                 'error' => 'Failed to get Facebook pages'
                             ], 400);
                         }
-                        
+
                         $pages = $pagesResponse->json()['data'] ?? [];
                         if (empty($pages)) {
                             return response()->json([
@@ -283,32 +281,32 @@ Route::prefix('v1')->group(function () {
                                 'error' => 'No Facebook pages found'
                             ], 404);
                         }
-                        
+
                         $selectedPage = $pages[0];
                         $pageAccessToken = $selectedPage['access_token'];
                         $pageId = $selectedPage['id'];
-                        
+
                         // Get recent posts
                         $postsResponse = Http::get("https://graph.facebook.com/v18.0/{$pageId}/posts", [
                             'fields' => 'id,created_time,type',
                             'limit' => 20,
                             'access_token' => $pageAccessToken
                         ]);
-                        
+
                         if (!$postsResponse->successful()) {
                             return response()->json([
                                 'success' => false,
                                 'error' => 'Failed to get Facebook posts'
                             ], 400);
                         }
-                        
+
                         $posts = $postsResponse->json()['data'] ?? [];
-                        
+
                         // Transform posts for frontend
-                        $dashboardPosts = array_map(function($post) use ($selectedPage) {
+                        $dashboardPosts = array_map(function ($post) use ($selectedPage) {
                             $postId = $post['id'];
                             $facebookUrl = "https://facebook.com/{$postId}";
-                            
+
                             return [
                                 'id' => $postId,
                                 'platform' => 'facebook',
@@ -337,7 +335,7 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ];
                         }, $posts);
-                        
+
                         return response()->json([
                             'success' => true,
                             'data' => [
@@ -355,7 +353,6 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ]
                         ]);
-                        
                     } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
@@ -363,13 +360,13 @@ Route::prefix('v1')->group(function () {
                         ], 500);
                     }
                 });
-                
+
                 // Get specific post display data
                 Route::get('/{postId}/display-data', function ($postId) {
                     try {
                         $oauthSessionsPath = storage_path('app/oauth_sessions');
                         $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
-                        
+
                         if (empty($facebookFiles)) {
                             return response()->json([
                                 'success' => false,
@@ -380,16 +377,16 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ], 401);
                         }
-                        
+
                         $latestTokenFile = end($facebookFiles);
                         $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
-                        
+
                         // Get page info
                         $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
                             'access_token' => $facebookToken['access_token'],
                             'fields' => 'id,name,access_token,picture'
                         ]);
-                        
+
                         if (!$pagesResponse->successful()) {
                             return response()->json([
                                 'success' => false,
@@ -399,7 +396,7 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ], 400);
                         }
-                        
+
                         $pages = $pagesResponse->json()['data'] ?? [];
                         if (empty($pages)) {
                             return response()->json([
@@ -410,16 +407,16 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ], 404);
                         }
-                        
+
                         $selectedPage = $pages[0];
                         $pageAccessToken = $selectedPage['access_token'];
-                        
+
                         // Try to get minimal post data
                         $postResponse = Http::get("https://graph.facebook.com/v18.0/{$postId}", [
                             'fields' => 'id,created_time,type',
                             'access_token' => $pageAccessToken
                         ]);
-                        
+
                         // Generate Facebook URLs
                         $facebookPostUrl = "https://facebook.com/{$postId}";
                         $facebookEmbedUrl = "https://www.facebook.com/plugins/post.php?" . http_build_query([
@@ -427,17 +424,17 @@ Route::prefix('v1')->group(function () {
                             'width' => '500',
                             'show_text' => 'true'
                         ]);
-                        
+
                         // Create frontend-optimized response
                         $displayData = [
                             'success' => true,
                             'data' => [
                                 'post_id' => $postId,
-                                'created_at' => $postResponse->successful() ? 
-                                    ($postResponse->json()['created_time'] ?? now()->toISOString()) : 
+                                'created_at' => $postResponse->successful() ?
+                                    ($postResponse->json()['created_time'] ?? now()->toISOString()) :
                                     now()->toISOString(),
-                                'type' => $postResponse->successful() ? 
-                                    ($postResponse->json()['type'] ?? 'status') : 
+                                'type' => $postResponse->successful() ?
+                                    ($postResponse->json()['type'] ?? 'status') :
                                     'status',
                                 'platform' => 'facebook',
                                 'page_info' => [
@@ -479,9 +476,8 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ]
                         ];
-                        
+
                         return response()->json($displayData);
-                        
                     } catch (\Exception $e) {
                         return response()->json([
                             'success' => false,
@@ -493,7 +489,7 @@ Route::prefix('v1')->group(function () {
                         ], 500);
                     }
                 });
-                
+
                 // Create new Facebook post
                 Route::post('/create', function (Request $request) {
                     try {
@@ -503,33 +499,33 @@ Route::prefix('v1')->group(function () {
                             'media' => 'nullable|array',
                             'media.*' => 'file|mimes:jpg,jpeg,png,gif,mp4,mov|max:102400' // 100MB
                         ]);
-                        
+
                         $oauthSessionsPath = storage_path('app/oauth_sessions');
                         $facebookFiles = glob($oauthSessionsPath . '/oauth_tokens_facebook_*.json');
-                        
+
                         if (empty($facebookFiles)) {
                             return response()->json([
                                 'success' => false,
                                 'error' => 'No Facebook authentication found'
                             ], 401);
                         }
-                        
+
                         $latestTokenFile = end($facebookFiles);
                         $facebookToken = json_decode(file_get_contents($latestTokenFile), true);
-                        
+
                         // Get page access token
                         $pagesResponse = Http::get('https://graph.facebook.com/v18.0/me/accounts', [
                             'access_token' => $facebookToken['access_token'],
                             'fields' => 'id,name,access_token'
                         ]);
-                        
+
                         if (!$pagesResponse->successful()) {
                             return response()->json([
                                 'success' => false,
                                 'error' => 'Failed to get Facebook pages'
                             ], 400);
                         }
-                        
+
                         $pages = $pagesResponse->json()['data'] ?? [];
                         if (empty($pages)) {
                             return response()->json([
@@ -537,29 +533,29 @@ Route::prefix('v1')->group(function () {
                                 'error' => 'No Facebook pages found'
                             ], 404);
                         }
-                        
+
                         $selectedPage = $pages[0];
                         $pageAccessToken = $selectedPage['access_token'];
                         $pageId = $selectedPage['id'];
-                        
+
                         // Create post data
                         $postData = [
                             'message' => $request->input('message'),
                             'access_token' => $pageAccessToken
                         ];
-                        
+
                         // Add link if provided
                         if ($request->has('link')) {
                             $postData['link'] = $request->input('link');
                         }
-                        
+
                         // Post to Facebook
                         $response = Http::post("https://graph.facebook.com/v18.0/{$pageId}/feed", $postData);
-                        
+
                         if ($response->successful()) {
                             $postResponse = $response->json();
                             $newPostId = $postResponse['id'];
-                            
+
                             return response()->json([
                                 'success' => true,
                                 'data' => [
@@ -571,13 +567,12 @@ Route::prefix('v1')->group(function () {
                                 ]
                             ]);
                         }
-                        
+
                         return response()->json([
                             'success' => false,
                             'error' => 'Failed to create Facebook post',
                             'facebook_error' => $response->json()
                         ], 400);
-                        
                     } catch (\Illuminate\Validation\ValidationException $e) {
                         return response()->json([
                             'success' => false,
@@ -592,7 +587,7 @@ Route::prefix('v1')->group(function () {
                     }
                 });
             });
-            
+
             // Facebook Analytics (Limited due to API restrictions)
             Route::prefix('analytics')->group(function () {
                 Route::get('/limitations', function () {

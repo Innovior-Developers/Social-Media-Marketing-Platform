@@ -15,14 +15,17 @@ class Membership extends Model
 
     protected $fillable = [
         'user_id',
+        'organization_id',
         'brand_id',
         'role',
         'permissions',
-        'invited_by',
+        'status',
+        'invited_at',
         'joined_at',
     ];
 
     protected $casts = [
+        'invited_at' => 'datetime',
         'joined_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
@@ -30,6 +33,7 @@ class Membership extends Model
 
     protected $attributes = [
         'role' => 'VIEWER',
+        'status' => 'active',
         'permissions' => [],
     ];
 
@@ -39,6 +43,11 @@ class Membership extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function organization()
+    {
+        return $this->belongsTo(Organization::class);
     }
 
     public function brand()
@@ -87,15 +96,28 @@ class Membership extends Model
     {
         $rolePermissions = [
             'OWNER' => [
-                'manage_brand', 'manage_team', 'create_posts', 'edit_posts', 
-                'delete_posts', 'schedule_posts', 'view_analytics', 'manage_channels'
+                'manage_brand',
+                'manage_team',
+                'create_posts',
+                'edit_posts',
+                'delete_posts',
+                'schedule_posts',
+                'view_analytics',
+                'manage_channels'
             ],
             'MANAGER' => [
-                'create_posts', 'edit_posts', 'delete_posts', 
-                'schedule_posts', 'view_analytics', 'manage_channels'
+                'create_posts',
+                'edit_posts',
+                'delete_posts',
+                'schedule_posts',
+                'view_analytics',
+                'manage_channels'
             ],
             'EDITOR' => [
-                'create_posts', 'edit_posts', 'schedule_posts', 'view_analytics'
+                'create_posts',
+                'edit_posts',
+                'schedule_posts',
+                'view_analytics'
             ],
             'VIEWER' => [
                 'view_analytics'
@@ -135,15 +157,28 @@ class Membership extends Model
     {
         $rolePermissions = [
             'OWNER' => [
-                'manage_brand', 'manage_team', 'create_posts', 'edit_posts', 
-                'delete_posts', 'schedule_posts', 'view_analytics', 'manage_channels'
+                'manage_brand',
+                'manage_team',
+                'create_posts',
+                'edit_posts',
+                'delete_posts',
+                'schedule_posts',
+                'view_analytics',
+                'manage_channels'
             ],
             'MANAGER' => [
-                'create_posts', 'edit_posts', 'delete_posts', 
-                'schedule_posts', 'view_analytics', 'manage_channels'
+                'create_posts',
+                'edit_posts',
+                'delete_posts',
+                'schedule_posts',
+                'view_analytics',
+                'manage_channels'
             ],
             'EDITOR' => [
-                'create_posts', 'edit_posts', 'schedule_posts', 'view_analytics'
+                'create_posts',
+                'edit_posts',
+                'schedule_posts',
+                'view_analytics'
             ],
             'VIEWER' => [
                 'view_analytics'

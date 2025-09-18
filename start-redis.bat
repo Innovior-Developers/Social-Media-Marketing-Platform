@@ -39,9 +39,10 @@ if %errorlevel% neq 0 (
 echo.
 echo [INFO] Testing Redis connection...
 timeout /t 2 /nobreak > nul
-docker exec redis-smp redis-cli ping 2>nul
-
+docker ps | findstr redis-smp > nul
 if %errorlevel% equ 0 (
+    docker exec redis-smp redis-cli ping 2>nul
+    if %errorlevel% equ 0 (
     echo.
     echo [SUCCESS] Redis is ready for your Social Media Platform!
     echo [INFO] Redis is now running on localhost:6379

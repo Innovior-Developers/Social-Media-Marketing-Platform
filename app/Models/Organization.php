@@ -15,7 +15,12 @@ class Organization extends Model
 
     protected $fillable = [
         'name',
+        'slug',
+        'owner_id',
         'settings',
+        'status',
+        'subscription_plan',
+        'subscription_status',
     ];
 
     protected $casts = [
@@ -24,6 +29,9 @@ class Organization extends Model
     ];
 
     protected $attributes = [
+        'status' => 'active',
+        'subscription_status' => 'active',
+        'subscription_plan' => 'free',
         'settings' => [
             'default_timezone' => 'UTC',
             'features' => ['analytics', 'scheduling', 'multi_brand'],
@@ -33,6 +41,18 @@ class Organization extends Model
     /**
      * Relationships
      */
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    public function users()
+    {
+        return $this->belongsToMany(User::class, null, 'organization_id', 'user_id')
+            ->using(Membership::class);
+    }
+
     public function brands()
     {
         return $this->hasMany(Brand::class);
@@ -40,7 +60,7 @@ class Organization extends Model
 
     public function memberships()
     {
-        return $this->hasManyThrough(Membership::class, Brand::class);
+        return $this->hasMany(Membership::class);
     }
 
     /**
@@ -71,7 +91,7 @@ class Organization extends Model
     {
         $settings = $this->getAttribute('settings') ?? [];
         $features = $settings['features'] ?? [];
-        
+
         if (!in_array($feature, $features)) {
             $features[] = $feature;
             $settings['features'] = $features;
